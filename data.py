@@ -16,7 +16,9 @@ admin.py 와 enrollment.py 가 둘 다 필요한 계산(수강 인원 세기, �
 비어 있는 것: write_all, 값 검사, 비교·계산, 역행 판정, 무결성 검사
 """
 
+import datetime
 import os
+import re
 from pathlib import Path
 
 import errors
@@ -314,21 +316,69 @@ def write_all(changes):
 # is_phone(s) 라고 하면 함수 안에서 s.replace("-", "") 가 뭘 하는지
 # 알 수 없다. is_phone(phone) 이면 읽힌다.
 
-def is_user_id(user_id):            pass   # 4.1.1  소문자 시작, 4~16자, 소문자+숫자   ← 1 이 먼저 작성
+# 아래 정규식은 [a-z], [0-9] 처럼 글자를 직접 나열한다.
+# \d 는 전각 숫자 '５' 도 숫자로 받아들이므로 쓰지 않는다. (1장 "숫자")
+# 검사는 fullmatch 로 한다. match 는 앞부분만, search 는 중간만 맞아도 통과시킨다.
+
+_USER_ID  = re.compile(r"[a-z][a-z0-9]{3,15}")          # 4.1.1  첫 글자 + 나머지 3~15자 = 4~16자
+_PASSWORD = re.compile(r"[A-Za-z0-9!@#$%]{8,20}")        # 4.3
+_DATE     = re.compile(r"([0-9]{4})-([0-9]{2})-([0-9]{2})")   # 4.7
+_TIME     = re.compile(r"([0-9]{2}):([0-9]{2})")              # 4.8
+
+
+def is_user_id(user_id):
+    """4.1.1 사용자 ID. 소문자로 시작, 4~16자, 소문자와 숫자만."""
+    return _USER_ID.fullmatch(user_id) is not None
+
+
 def is_inner_id(value, prefix):     pass   # 4.1.2  앞글자(ID_* 상수) + 숫자 4개. 숫자 부분 0000 은 틀린 값
 def is_person_name(name):           pass   # 4.2.1  1~20자, 한글·로마자·공백
 def is_subject_name(name):          pass   # 4.2.2  1~20자, 숫자도 허용
 def is_class_name(name):            pass   # 4.2.3  정확히 2글자, 대문자 + "반"
-def is_password(password):          pass   # 4.3    8~20자, 영문·숫자·! @ # $ %       ← 1 이 먼저 작성
+
+
+def is_password(password):
+    """4.3 비밀번호. 8~20자, 로마자 대소문자·숫자·! @ # $ % 만. 공백·탭은 안 된다."""
+    return _PASSWORD.fullmatch(password) is not None
+
+
 def is_role(role):                  pass   # 4.4    원장 / 강사 / 학생
 def is_phone(phone):                pass   # 4.5    숫자 9~11개, "-" 허용
 def is_student_status(status):      pass   # 4.6.1  재원 / 퇴원
 def is_teacher_status(status):      pass   # 4.6.2  재직 / 퇴직
 def is_class_status(status):        pass   # 4.6.3  개설 / 폐강
 def is_enroll_status(status):       pass   # 4.6.4  수강중 / 취소
-def is_date(date):                  pass   # 4.7    YYYY-MM-DD                  ← 1 이 먼저 작성
-def is_time(time):                  pass   # 4.8    HH:MM                       ← 1 이 먼저 작성
-def is_datetime(dt):                pass   # 4.9    날짜 공백 시각              ← 1 이 먼저 작성
+def is_date(date):
+    """4.7 날짜. 문법(YYYY-MM-DD)과 의미(실제로 있는 날짜)를 둘 다 본다.
+
+    datetime.strptime 만으로 검사하지 않는다. strptime 은 "2026-9-27" 처럼
+    한 자리 월도 받아들이는데, 4.7 은 이걸 틀린 날짜라고 한다.
+    그래서 형식은 정규식으로 먼저 정확히 보고, 실제로 있는 날짜인지는
+    datetime.date 를 만들어 보는 것으로 확인한다. (2026-02-30 은 만들 수 없다)
+    """
+    found = _DATE.fullmatch(date)
+    if found is None:
+        return False
+    year, month, day = (int(part) for part in found.groups())
+    try:
+        datetime.date(year, month, day)
+    except ValueError:
+        return False
+    return True
+
+
+def is_time(time):
+    """4.8 시각. HH:MM, 시는 00~23, 분은 00~59."""
+    found = _TIME.fullmatch(time)
+    if found is None:
+        return False
+    hour, minute = (int(part) for part in found.groups())
+    return hour <= 23 and minute <= 59
+
+
+def is_datetime(dt):
+    """4.9 일시. 〈날짜〉␣〈시각〉 — 날짜 10자, 표준공백 하나, 시각 5자."""
+    return len(dt) == 16 and dt[10] == " " and is_date(dt[:10]) and is_time(dt[11:])
 def is_period(period):              pass   # 4.10   문법 — 숫자 1~2자, 선행 0 불가
 def is_valid_period(period):        pass   # 4.10   의미 — 1 이상 10 이하
 def is_weekday(weekday):            pass   # 4.11
@@ -366,8 +416,36 @@ def next_id(prefix):                           pass  # 5.1.13 최대값 + 1, 없
 # main.py 에 두면 virtual_time.py 가 main.py 를 import 해야 하는데,
 # main.py 는 아무도 import 하지 않는 게 규칙이다.
 
-def backward_limit():          pass  # 4.14   역행 판정 기준 일시 (기록 일시의 최댓값)   ← 1, 10/10
-def is_backward(new_dt):       pass  # 6.3.3  new_dt 가 backward_limit() 보다 이전이면 True
+#
+# 일시끼리는 문자열 그대로 < 로 비교한다.
+# 4.9 형식("2026-09-27 14:30")은 자릿수가 고정이고 큰 단위부터 적혀 있어서,
+# 형식이 맞는 두 일시는 글자 순서와 시간 순서가 같다.
+
+def backward_limit():
+    """4.14 역행 판정 기준 일시.
+
+    4.14 — "역행 판정 기준 일시는 '기록 일시' 집합의 최댓값과 현재 저장된
+    가상 현재 일시 중 더 나중의 일시를 말한다."
+    기록 일시는 세 가지뿐이다.
+        ① enrollments.txt 의 등록 일시
+        ② enrollments.txt 의 취소 일시 (취소 상태인 레코드만)
+        ③ datetime.txt 의 모든 줄 (이력 + 지금의 가상 일시)
+    classes.txt 의 시작일·종료일은 아직 오지 않은 예정이라 넣지 않는다.
+
+    형식이 틀린 값은 건너뛴다. 그런 값은 무결성 검사가 따로 오류로 잡는다.
+    """
+    candidates = list(read_datetime())                    # ③
+    for enrollment in read_enrollments():
+        candidates.append(enrollment["등록일시"])          # ①
+        if enrollment["등록상태"] == "취소":
+            candidates.append(enrollment["취소일시"])      # ②
+    # 올바른 값이 하나도 없으면 "" 를 돌려준다. 어떤 일시도 "" 보다 이전이 아니므로 역행으로 막지 않는다.
+    return max((dt for dt in candidates if is_datetime(dt)), default="")
+
+
+def is_backward(new_dt):
+    """6.3.3 new_dt 가 역행 판정 기준 일시보다 이전이면 True. 같은 일시는 허용한다."""
+    return new_dt < backward_limit()
 
 
 # ---- 무결성 검사 — 개별 검사는 2, 전체 연결은 5 ----

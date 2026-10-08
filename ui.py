@@ -37,13 +37,23 @@ def ask_menu_choice(valid):
     프롬프트는 "번호를 입력하세요: " 이다. (6.1.1)
     앞뒤 표준공백(스페이스)은 떼고 본다. (5.3) 탭은 떼지 않는다.
     번호 하나만 허용한다. 01, +1, 1.0, 1,2, 빈 입력은 모두 잘못된 입력이다.
-    숫자는 '0'~'9' 만이다. str.isdigit() 는 '５', '①' 도 통과시키므로 쓰지 않는다. (1장 "숫자")
 
     올바르면 그 번호를 int 로 돌려준다.
     잘못되면 [E_MENU_CHOICE] 메시지를 출력하고 None 을 돌려준다.
     None 을 받은 쪽은 같은 메뉴를 다시 출력하고 다시 묻는다.
     """
-    pass
+    # strip() 은 탭·전각 공백까지 떼므로 표준공백 " " 만 지정한다. (5.3, 1장 "표준공백")
+    text = input("번호를 입력하세요: ").strip(" ")
+
+    # int(text) 로 바꿔 비교하지 않고, 화면 번호를 글자로 바꿔 통째로 비교한다.
+    # int() 는 "01", "+1", " 1", "５" 를 전부 1 로 받아들이지만,
+    # "1" == "01" 은 거짓이라 6.1.2 가 막으라는 입력이 저절로 걸러진다.
+    for number in valid:
+        if text == str(number):
+            return number
+
+    print(f"[{errors.E_MENU_CHOICE}] {errors.ERROR_MESSAGES[errors.E_MENU_CHOICE]}")
+    return None
 
 
 def ask_yes_no(action, cancel_message="작업을 취소했습니다. 변경된 내용이 없습니다."):
@@ -61,7 +71,11 @@ def ask_yes_no(action, cancel_message="작업을 취소했습니다. 변경된 �
 
     취소 메시지는 이 함수가 출력한다. 부르는 쪽에서 또 출력하지 않는다.
     """
-    pass
+    answer = input(f"{action}하시겠습니까? (Y/N, 기본값 N): ").strip(" ")
+    if answer in ("Y", "y"):
+        return True
+    print(cancel_message)
+    return False
 
 
 def ask_required(label, strip=True):
@@ -79,4 +93,34 @@ def ask_required(label, strip=True):
     로그인(6.2.1)에는 쓰지 않는다. 로그인은 "0 이면 6.7.1 종료 절차 → 빈 입력 → 형식 → 계정 확인"
     순서가 따로 정해져 있고, 비밀번호는 getpass 로 받으며, /cancel 이 없다.
     """
-    pass
+    while True:
+        text = input(f"{label}: ")
+        if strip:
+            text = text.strip(" ")
+        if text == "/cancel":
+            raise InputCancelled()
+        if text == "":
+            print(f"[{errors.E_INPUT_EMPTY}] {errors.ERROR_MESSAGES[errors.E_INPUT_EMPTY]}")
+            continue
+        return text
+
+
+def ask_target(label):
+    """상세 조회·수정·삭제할 대상의 ID 처럼, 작업 대상을 지정하는 값을 입력받는다. (6.1.5)
+
+    label  프롬프트 문장. 예) "학생 ID를 입력하세요"  →  화면에는 "학생 ID를 입력하세요: "
+
+    6.1.5 표 — "상세 조회 등 대상을 지정하기 위한 ID 입력: 해당 작업을 취소하고 이전 메뉴로 돌아간다."
+    그래서 ask_required 와 달리 빈 입력이면 다시 묻지 않고 None 을 돌려준다.
+    받은 쪽은 None 이면 아무것도 바꾸지 않고 이전 메뉴로 돌아간다.
+
+        student_id = ui.ask_target("학생 ID를 입력하세요")
+        if student_id is None:
+            return
+
+    앞뒤 표준공백은 뗀다. (5.3) 형식 검사는 부르는 쪽이 data.is_* 로 한다.
+    """
+    text = input(f"{label}: ").strip(" ")
+    if text == "":
+        return None
+    return text
