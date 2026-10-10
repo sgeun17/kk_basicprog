@@ -178,8 +178,53 @@ def list_open_classes(user):
         if already_enrolled:
             continue
 
-        # 정원 및 시간 충돌 검사는 공통 데이터 함수 구현 후 연결
+        # 정원 확인
+        current_count = data.count_enrolled(c["반ID"])
+
+        # 공통 함수가 미구현이면 목록에 포함하지 않는다.
+        if current_count is None:
+            print("수강 인원 계산 기능이 아직 구현되지 않았습니다.")
+            return
+
+        if current_count >= int(c["정원"]):
+            continue
+
+        # 기존 수강 반과 시간표 충돌 확인
+        has_conflict = False
+
+        for e in enrollments:
+            if (
+                e["학생ID"] != student["학생ID"]
+                or e["등록상태"] != "수강중"
+            ):
+                continue
+
+            other_class = next(
+                (other for other in classes
+                 if other["반ID"] == e["반ID"]),
+                None
+            )
+
+            if other_class is None:
+                print(f"[{errors.E_REF_MISSING}] 기존 수강 반을 찾을 수 없습니다.")
+                return
+
+            conflict = data.is_schedule_conflict(c, other_class)
+
+            if conflict is None:
+                print("시간표 충돌 검사 기능이 아직 구현되지 않았습니다.")
+                return
+
+            if conflict:
+                has_conflict = True
+                break
+
+        if has_conflict:
+            continue
+
+        # 모든 조건을 통과한 반만 목록에 추가
         available_classes.append(c)
+
 
     # 신청 가능한 반이 없는 경우
     if not available_classes:
