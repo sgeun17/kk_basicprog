@@ -220,10 +220,135 @@ def list_open_classes(user):
     print()
     print("상세 조회할 반 ID를 입력하세요.")
 
-show_my_info(user)
-show_class_detail(user)
-list_open_classes(user)
 
+# 6.4.3 수강 신청
+def enroll_class(user):
+    """로그인한 학생이 반을 수강 신청한다."""
+
+    # 로그인한 학생 찾기
+    student = None
+    for s in data.read_students():
+        if s["사용자ID"] == user["사용자ID"]:
+            student = s
+            break
+
+    if student is None:
+        print(f"[{errors.E_REF_MISSING}] 학생 정보를 찾을 수 없습니다.")
+        return
+
+    if student["학생상태"] != "재원":
+        print("재원 상태인 학생만 수강 신청할 수 있습니다.")
+        return
+
+    # 신청할 반 ID 입력
+    class_id = ui.ask_target("수강 신청할 반 ID를 입력하세요")
+    if class_id is None:
+        return
+
+    # 반 정보 찾기
+    classes = data.read_classes()
+    class_info = None
+
+    for c in classes:
+        if c["반ID"] == class_id:
+            class_info = c
+            break
+
+    if class_info is None:
+        print(f"[{errors.E_REF_MISSING}] 해당 반을 찾을 수 없습니다.")
+        return
+
+    # 반 상태 및 신청 기간 확인
+    if class_info["반상태"] != "개설":
+        print("개설된 반만 신청할 수 있습니다.")
+        return
+
+    if data.now()[:10] >= class_info["시작날짜"]:
+        print("수업 시작일 전까지만 신청할 수 있습니다.")
+        return
+
+    # 기존 수강 등록 정보 확인
+    enrollments = data.read_enrollments()
+
+    for e in enrollments:
+        if (
+            e["학생ID"] == student["학생ID"]
+            and e["반ID"] == class_id
+            and e["등록상태"] == "수강중"
+        ):
+            print("이미 수강 중인 반입니다.")
+            return
+
+    # 정원 확인
+    current_count = data.count_enrolled(class_id)
+
+    if current_count is None:
+        print("수강 인원 계산 기능이 아직 구현되지 않았습니다.")
+        return
+
+    if current_count >= int(class_info["정원"]):
+        print("정원이 가득 찬 반입니다.")
+        return
+
+    # 시간표 충돌 확인
+    for e in enrollments:
+        if (
+            e["학생ID"] != student["학생ID"]
+            or e["등록상태"] != "수강중"
+        ):
+            continue
+
+        other_class = None
+        for c in classes:
+            if c["반ID"] == e["반ID"]:
+                other_class = c
+                break
+
+        if other_class is None:
+            print(f"[{errors.E_REF_MISSING}] 기존 수강 반을 찾을 수 없습니다.")
+            return
+
+        conflict = data.is_schedule_conflict(class_info, other_class)
+
+        if conflict is None:
+            print("시간표 충돌 검사 기능이 아직 구현되지 않았습니다.")
+            return
+
+        if conflict:
+            print("이미 수강 중인 반과 수업 시간이 겹칩니다.")
+            return
+
+    # 최종 확인
+    if not ui.ask_yes_no(
+        f"반 {class_id}({class_info['반이름']})을 수강 신청"
+    ):
+        return
+
+    # 등록 ID 생성
+    enrollment_id = data.next_id(data.ID_ENROLLMENT)
+
+    if enrollment_id is None:
+        print("등록 ID 생성 기능이 아직 구현되지 않았습니다.")
+        return
+
+    # 등록 정보 생성
+    new_enrollment = {
+        "등록ID": enrollment_id,
+        "학생ID": student["학생ID"],
+        "반ID": class_id,
+        "등록일시": data.now(),
+        "등록상태": "수강중",
+        "취소일시": data.EMPTY,
+    }
+
+    enrollments.append(new_enrollment)
+
+    # 저장
+    if not data.write_enrollments(enrollments):
+        print(f"[{errors.E_SAVE}] 저장하지 못했습니다.")
+        return
+
+    print("수강 신청이 완료되었습니다.")
 
 
 # ---- 6.5 강사 메뉴 ----
