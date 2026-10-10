@@ -417,14 +417,17 @@ def list_my_enrollments(user):
 
     my_enrollments = [
         e for e in enrollments
-        if e["학생ID"] == student["학생ID"]
+        if (
+            e["학생ID"] == student["학생ID"]
+            and e["등록상태"] == "수강중"
+        )
     ]
 
     print()
     print("===== 학생 메뉴 > 내 수강 목록 조회 =====")
 
     if not my_enrollments:
-        print("수강 등록 내역이 없습니다.")
+        print("현재 수강 중인 반이 없습니다.")
         return
 
     for e in my_enrollments:
