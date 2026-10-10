@@ -351,6 +351,155 @@ def enroll_class(user):
     print("수강 신청이 완료되었습니다.")
 
 
+# 6.4.4 내 수강 목록 조회
+def list_my_enrollments(user):
+    """로그인한 학생의 수강 등록 내역을 조회한다."""
+
+    student = None
+    for s in data.read_students():
+        if s["사용자ID"] == user["사용자ID"]:
+            student = s
+            break
+
+    if student is None:
+        print(f"[{errors.E_REF_MISSING}] 학생 정보를 찾을 수 없습니다.")
+        return
+
+    enrollments = data.read_enrollments()
+    classes = data.read_classes()
+    subjects = data.read_subjects()
+    teachers = data.read_teachers()
+
+    my_enrollments = [
+        e for e in enrollments
+        if e["학생ID"] == student["학생ID"]
+    ]
+
+    print()
+    print("===== 학생 메뉴 > 내 수강 목록 조회 =====")
+
+    if not my_enrollments:
+        print("수강 등록 내역이 없습니다.")
+        return
+
+    for e in my_enrollments:
+        class_info = next(
+            (c for c in classes if c["반ID"] == e["반ID"]),
+            None
+        )
+
+        if class_info is None:
+            print(f"[{errors.E_REF_MISSING}] 반 정보를 찾을 수 없습니다.")
+            continue
+
+        subject = next(
+            (s for s in subjects
+             if s["과목ID"] == class_info["과목ID"]),
+            None
+        )
+        teacher = next(
+            (t for t in teachers
+             if t["강사ID"] == class_info["강사ID"]),
+            None
+        )
+
+        subject_name = subject["과목명"] if subject else "정보 없음"
+        teacher_name = teacher["이름"] if teacher else "정보 없음"
+
+        print()
+        print(f"등록 ID: {e['등록ID']}")
+        print(f"반 ID: {class_info['반ID']}")
+        print(f"반 이름: {class_info['반이름']}")
+        print(f"과목명: {subject_name}")
+        print(f"담당 강사: {teacher_name}")
+        print(f"수업 요일: {class_info['요일목록']}")
+        print(
+            f"교시: {class_info['시작교시']}~"
+            f"{class_info['종료교시']}교시"
+        )
+        print(
+            f"수업 기간: {class_info['시작날짜']}~"
+            f"{class_info['종료날짜']}"
+        )
+        print(f"등록 상태: {e['등록상태']}")
+
+
+# 6.4.5 수강 취소
+def cancel_enrollment(user):
+    """로그인한 학생의 수강 등록을 취소한다."""
+
+    # 로그인한 학생 찾기
+    student = None
+    for s in data.read_students():
+        if s["사용자ID"] == user["사용자ID"]:
+            student = s
+            break
+
+    if student is None:
+        print(f"[{errors.E_REF_MISSING}] 학생 정보를 찾을 수 없습니다.")
+        return
+
+    # 취소할 반 ID 입력
+    class_id = ui.ask_target("수강 취소할 반 ID를 입력하세요")
+
+    if class_id is None:
+        return
+
+    enrollments = data.read_enrollments()
+    classes = data.read_classes()
+
+    # 해당 학생의 수강 중인 등록 찾기
+    target = None
+
+    for e in enrollments:
+        if (
+            e["학생ID"] == student["학생ID"]
+            and e["반ID"] == class_id
+            and e["등록상태"] == "수강중"
+        ):
+            target = e
+            break
+
+    if target is None:
+        print("해당 반의 수강 중인 등록 내역이 없습니다.")
+        return
+
+    # 반 정보 찾기
+    class_info = next(
+        (c for c in classes if c["반ID"] == class_id),
+        None
+    )
+
+    if class_info is None:
+        print(f"[{errors.E_REF_MISSING}] 반 정보를 찾을 수 없습니다.")
+        return
+
+    # 수강 취소 대상 확인
+    print()
+    print("===== 학생 메뉴 > 수강 취소 =====")
+    print(f"반 ID: {class_id}")
+    print(f"반 이름: {class_info['반이름']}")
+    print(f"등록 ID: {target['등록ID']}")
+    print(f"등록 상태: {target['등록상태']}")
+
+    # 최종 확인
+    if not ui.ask_yes_no(
+        f"반 {class_id}({class_info['반이름']})의 수강을 취소"
+    ):
+        return
+
+    # 기존 기록을 삭제하지 않고 상태만 변경
+    target["등록상태"] = "취소"
+    target["취소일시"] = data.now()
+
+    # 저장
+    if not data.write_enrollments(enrollments):
+        print(f"[{errors.E_SAVE}] 저장하지 못했습니다.")
+        return
+
+    print("수강 취소가 완료되었습니다.")
+
+
 # ---- 6.5 강사 메뉴 ----
 
 
