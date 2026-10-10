@@ -117,7 +117,12 @@ def show_class_detail(user):
         f"수업 기간: {class_info['시작날짜']}~"
         f"{class_info['종료날짜']}"
     )
-    print(f"정원: {class_info['정원']}")
+    current_count = data.count_enrolled(class_info["반ID"])
+    
+    if current_count is None:
+        print(f"현재 인원/정원: 미구현/{class_info['정원']}")
+    else:
+        print(f"현재 인원/정원: {current_count}/{class_info['정원']}")
     print(f"반 상태: {class_info['반상태']}")
 
 
