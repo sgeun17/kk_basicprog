@@ -502,5 +502,169 @@ def cancel_enrollment(user):
 
 # ---- 6.5 강사 메뉴 ----
 
+# ---- 6.5 강사 메뉴 ----
+
+# 6.5.1 담당 반 조회
+def list_teacher_classes(user):
+    """로그인한 강사가 담당하는 반 목록을 조회한다."""
+
+    teacher = next(
+        (t for t in data.read_teachers()
+         if t["사용자ID"] == user["사용자ID"]),
+        None
+    )
+
+    if teacher is None:
+        print(f"[{errors.E_REF_MISSING}] 강사 정보를 찾을 수 없습니다.")
+        return
+
+    classes = data.read_classes()
+    subjects = data.read_subjects()
+
+    my_classes = [
+        c for c in classes
+        if c["강사ID"] == teacher["강사ID"]
+    ]
+
+    print()
+    print("===== 강사 메뉴 > 담당 반 조회 =====")
+
+    if not my_classes:
+        print("담당하는 반이 없습니다.")
+        return
+
+    for c in my_classes:
+        subject = next(
+            (s for s in subjects if s["과목ID"] == c["과목ID"]),
+            None
+        )
+        subject_name = subject["과목명"] if subject else "정보 없음"
+
+        print()
+        print(f"반 ID: {c['반ID']}")
+        print(f"반 이름: {c['반이름']}")
+        print(f"과목명: {subject_name}")
+        print(f"요일: {c['요일목록']}")
+        print(f"교시: {c['시작교시']}~{c['종료교시']}교시")
+        print(f"기간: {c['시작날짜']}~{c['종료날짜']}")
+        print(f"정원: {c['정원']}")
+        print(f"반 상태: {c['반상태']}")
+
+
+# 6.5.2 담당 반 수강생 조회
+def list_class_students(user):
+    """강사가 담당하는 반의 수강생을 조회한다."""
+
+    teacher = next(
+        (t for t in data.read_teachers()
+         if t["사용자ID"] == user["사용자ID"]),
+        None
+    )
+
+    if teacher is None:
+        print(f"[{errors.E_REF_MISSING}] 강사 정보를 찾을 수 없습니다.")
+        return
+
+    class_id = ui.ask_target("수강생을 조회할 반 ID를 입력하세요")
+    if class_id is None:
+        return
+
+    class_info = next(
+        (c for c in data.read_classes()
+         if c["반ID"] == class_id
+         and c["강사ID"] == teacher["강사ID"]),
+        None
+    )
+
+    if class_info is None:
+        print("본인이 담당하는 반이 아니거나 존재하지 않는 반입니다.")
+        return
+
+    enrollments = data.read_enrollments()
+    students = data.read_students()
+
+    print()
+    print(f"===== {class_info['반이름']} 수강생 조회 =====")
+
+    count = 0
+
+    for e in enrollments:
+        if e["반ID"] != class_id or e["등록상태"] != "수강중":
+            continue
+
+        student = next(
+            (s for s in students if s["학생ID"] == e["학생ID"]),
+            None
+        )
+
+        if student is None:
+            print(f"[{errors.E_REF_MISSING}] 학생 정보를 찾을 수 없습니다.")
+            continue
+
+        count += 1
+        print(f"{count}. {student['학생ID']} | {student['이름']}")
+
+    if count == 0:
+        print("현재 수강 중인 학생이 없습니다.")
+
+
+# 6.5.3 수업 일정 조회
+def show_teacher_schedule(user):
+    """강사가 현재 진행 중인 담당 반의 수업 일정을 조회한다."""
+
+    teacher = next(
+        (t for t in data.read_teachers()
+         if t["사용자ID"] == user["사용자ID"]),
+        None
+    )
+
+    if teacher is None:
+        print(f"[{errors.E_REF_MISSING}] 강사 정보를 찾을 수 없습니다.")
+        return
+
+    today = data.now()[:10]
+
+    classes = [
+        c for c in data.read_classes()
+        if (
+            c["강사ID"] == teacher["강사ID"]
+            and c["반상태"] == "개설"
+            and c["시작날짜"] <= today <= c["종료날짜"]
+        )
+    ]
+
+    weekday_order = {
+        "월": 0, "화": 1, "수": 2, "목": 3,
+        "금": 4, "토": 5, "일": 6
+    }
+
+    def schedule_key(c):
+        days = [
+            weekday_order[d]
+            for d in c["요일목록"]
+            if d in weekday_order
+        ]
+        return (
+            min(days) if days else 7,
+            int(c["시작교시"]),
+            c["반ID"]
+        )
+
+    classes.sort(key=schedule_key)
+
+    print()
+    print("===== 강사 메뉴 > 수업 일정 조회 =====")
+
+    if not classes:
+        print("현재 진행 중인 수업이 없습니다.")
+        return
+
+    for c in classes:
+        print(
+            f"{c['요일목록']} | "
+            f"{c['시작교시']}~{c['종료교시']}교시 | "
+            f"{c['반ID']} | {c['반이름']}"
+        )
+
 
 # ---- 6.6.5 수강 등록 조회·취소 (원장) ----
