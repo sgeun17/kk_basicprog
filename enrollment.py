@@ -220,7 +220,9 @@ def list_open_classes(user):
     print()
     print("상세 조회할 반 ID를 입력하세요.")
 
-
+show_my_info(user)
+show_class_detail(user)
+list_open_classes(user)
 
 
 
