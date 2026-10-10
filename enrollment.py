@@ -548,8 +548,6 @@ def cancel_enrollment(user):
 
 # ---- 6.5 강사 메뉴 ----
 
-# ---- 6.5 강사 메뉴 ----
-
 # 6.5.1 담당 반 조회
 def list_teacher_classes(user):
     """로그인한 강사가 담당하는 반 목록을 조회한다."""
