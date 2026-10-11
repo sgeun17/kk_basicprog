@@ -292,16 +292,74 @@ def cleanup_tmp():
 
 
 def write_all(changes):
-    """여러 파일을 함께 바꾼다. 전부 성공해야 교체한다. (5.4)
-
-    5.4 — "변경 대상 파일 전부의 새 내용을 각각 임시 파일에 먼저 기록하고,
-    모든 기록에 성공한 경우에만 교체를 시작한다. 하나라도 실패하면
-    임시 파일을 모두 삭제하고 작업 전체를 실패로 처리한다."
-
-    _write_text 는 파일 하나를 쓰고 바로 교체하므로 여기서 쓸 수 없다.
-    쓰기 단계와 교체 단계를 나눠야 한다.
-    """
-    pass
+    """여러 파일을 임시 저장한 뒤 교체하고, 처리 가능한 실패 시 원본을 복구한다."""
+    contents = {}
+    for path, records in changes.items():
+        header = HEADERS[path]
+        lines = ["\t".join(header)]
+        lines.extend("\t".join(rec[field] for field in header) for rec in records)
+        contents[path] = "\n".join(lines) + "\n"
+    originals, temporary, replaced, backups = {}, [], [], []
+    keep_backups = False
+    try:
+        for path in contents:
+            if any(path.with_name(path.name + suffix).exists()
+                   for suffix in (".recovery", ".recovery-missing")):
+                raise errors.DataError(errors.E_SAVE, f"{path.name}: 이전 저장의 복구 파일을 먼저 확인하세요.")
+        for path, text in contents.items():
+            originals[path] = path.read_bytes() if path.exists() else None
+            tmp = path.with_name(path.name + TMP_SUFFIX)
+            temporary.append(tmp)
+            with open(tmp, "w", encoding="utf-8", newline="") as file:
+                file.write(text)
+        for path, original in originals.items():
+            suffix = ".recovery" if original is not None else ".recovery-missing"
+            backup = path.with_name(path.name + suffix)
+            with open(backup, "xb") as file:
+                backups.append(backup)
+                file.write(original if original is not None else b"")
+        keep_backups = True
+        for path, tmp in zip(contents, temporary):
+            os.replace(tmp, path)
+            replaced.append(path)
+        keep_backups = False
+    except (OSError, UnicodeError, KeyboardInterrupt, EOFError) as failure:
+        failed = []
+        for path in reversed(replaced):
+            try:
+                original = originals[path]
+                if original is None:
+                    path.unlink()
+                else:
+                    tmp = path.with_name(path.name + TMP_SUFFIX)
+                    tmp.write_bytes(original)
+                    os.replace(tmp, path)
+            except OSError:
+                failed.append(path.name)
+        if failed:
+            keep_backups = True
+            locations = ", ".join(str(backup) for backup in backups)
+            raise errors.DataError(
+                errors.E_SAVE,
+                f"{', '.join(failed)}: 원본 복구 실패. 복구 파일을 보존했습니다: {locations}"
+            ) from failure
+        keep_backups = False
+        if isinstance(failure, (KeyboardInterrupt, EOFError)):
+            raise
+        return False
+    finally:
+        for tmp in temporary:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+        if not keep_backups:
+            for backup in backups:
+                try:
+                    backup.unlink(missing_ok=True)
+                except OSError:
+                    pass
+    return True
 
 
 # ---- 값 검증 : True / False ----
@@ -331,10 +389,29 @@ def is_user_id(user_id):
     return _USER_ID.fullmatch(user_id) is not None
 
 
-def is_inner_id(value, prefix):     pass   # 4.1.2  앞글자(ID_* 상수) + 숫자 4개. 숫자 부분 0000 은 틀린 값
-def is_person_name(name):           pass   # 4.2.1  1~20자, 한글·로마자·공백
-def is_subject_name(name):          pass   # 4.2.2  1~20자, 숫자도 허용
-def is_class_name(name):            pass   # 4.2.3  정확히 2글자, 대문자 + "반"
+def is_inner_id(value, prefix):
+    """종류에 맞는 내부 ID 형식과 0000 제외 조건을 검사한다."""
+    return (prefix in (ID_STUDENT, ID_TEACHER, ID_SUBJECT, ID_CLASS, ID_ENROLLMENT)
+            and isinstance(value, str)
+            and re.fullmatch(re.escape(prefix) + r"[0-9]{4}", value) is not None
+            and value[1:] != "0000")
+
+
+def is_person_name(name):
+    """사람 이름의 문자, 길이, 공백 규칙을 검사한다."""
+    return (isinstance(name, str) and re.fullmatch(r"[가-힣A-Za-z ]{1,20}", name) is not None
+            and name == name.strip(" ") and "  " not in name)
+
+
+def is_subject_name(name):
+    """숫자를 포함할 수 있는 과목명의 형식을 검사한다."""
+    return (isinstance(name, str) and re.fullmatch(r"[가-힣A-Za-z0-9 ]{1,20}", name) is not None
+            and name == name.strip(" ") and "  " not in name)
+
+
+def is_class_name(name):
+    """반 이름이 A반부터 Z반 중 하나인지 검사한다."""
+    return isinstance(name, str) and re.fullmatch(r"[A-Z]반", name) is not None
 
 
 def is_password(password):
@@ -342,12 +419,35 @@ def is_password(password):
     return _PASSWORD.fullmatch(password) is not None
 
 
-def is_role(role):                  pass   # 4.4    원장 / 강사 / 학생
-def is_phone(phone):                pass   # 4.5    숫자 9~11개, "-" 허용
-def is_student_status(status):      pass   # 4.6.1  재원 / 퇴원
-def is_teacher_status(status):      pass   # 4.6.2  재직 / 퇴직
-def is_class_status(status):        pass   # 4.6.3  개설 / 폐강
-def is_enroll_status(status):       pass   # 4.6.4  수강중 / 취소
+def is_role(role):
+    """사용자 역할을 검사한다."""
+    return role in ("원장", "강사", "학생")
+
+
+def is_phone(phone):
+    """연락처의 숫자 개수와 하이픈 위치를 검사한다."""
+    return (isinstance(phone, str) and re.fullmatch(r"[0-9]+(?:-[0-9]+)*", phone) is not None
+            and 9 <= len(phone.replace("-", "")) <= 11)
+
+
+def is_student_status(status):
+    """학생의 저장 상태를 검사한다."""
+    return status in ("재원", "퇴원")
+
+
+def is_teacher_status(status):
+    """강사의 저장 상태를 검사한다."""
+    return status in ("재직", "퇴직")
+
+
+def is_class_status(status):
+    """반의 저장 상태를 검사한다."""
+    return status in ("개설", "폐강")
+
+
+def is_enroll_status(status):
+    """수강 등록의 저장 상태를 검사한다."""
+    return status in ("수강중", "취소")
 def is_date(date):
     """4.7 날짜. 문법(YYYY-MM-DD)과 의미(실제로 있는 날짜)를 둘 다 본다.
 
@@ -379,14 +479,56 @@ def is_time(time):
 def is_datetime(dt):
     """4.9 일시. 〈날짜〉␣〈시각〉 — 날짜 10자, 표준공백 하나, 시각 5자."""
     return len(dt) == 16 and dt[10] == " " and is_date(dt[:10]) and is_time(dt[11:])
-def is_period(period):              pass   # 4.10   문법 — 숫자 1~2자, 선행 0 불가
-def is_valid_period(period):        pass   # 4.10   의미 — 1 이상 10 이하
-def is_weekday(weekday):            pass   # 4.11
-def is_weekday_list(weekdays):      pass   # 4.11.1 문법 — 공백 하나로 나열
-def is_valid_weekday_list(weekdays): pass  # 4.11.1 의미 — 중복 없음, 최소 1개
-def is_schedule(schedule):          pass   # 4.12   시작 ≤ 종료 (날짜·교시). 시작·종료 날짜의 요일이 요일 목록에 있어야 함
-def is_capacity(capacity):          pass   # 4.13   문법 — 숫자 1~2자, 선행 0 불가
-def is_valid_capacity(capacity):    pass   # 4.13   의미 — 1 이상
+def is_period(period):
+    """교시 문자열의 문법을 검사한다."""
+    return isinstance(period, str) and re.fullmatch(r"0|[1-9][0-9]?", period) is not None
+
+
+def is_valid_period(period):
+    """교시가 올바른 형식이며 1~10인지 검사한다."""
+    return is_period(period) and 1 <= int(period) <= 10
+
+
+def is_weekday(weekday):
+    """요일 하나가 유효한지 검사한다."""
+    return weekday in WEEKDAYS
+
+
+def is_weekday_list(weekdays):
+    """요일 목록이 표준공백 하나로 구분되는지 검사한다."""
+    return isinstance(weekdays, str) and re.fullmatch(r"[월화수목금토일](?: [월화수목금토일])*", weekdays) is not None
+
+
+def is_valid_weekday_list(weekdays):
+    """요일 목록의 문법과 중복 여부를 검사한다."""
+    return is_weekday_list(weekdays) and len(weekdays.split(" ")) == len(set(weekdays.split(" ")))
+
+
+def is_schedule(schedule):
+    """일정의 날짜·교시 범위와 첫날·마지막 날의 요일을 검사한다."""
+    fields = ("시작날짜", "종료날짜", "요일목록", "시작교시", "종료교시")
+    if not all(isinstance(schedule.get(field), str) for field in fields):
+        return False
+    start, end = schedule["시작날짜"], schedule["종료날짜"]
+    weekdays = schedule["요일목록"]
+    if not (is_date(start) and is_date(end) and start <= end
+            and is_valid_weekday_list(weekdays)
+            and is_valid_period(schedule["시작교시"])
+            and is_valid_period(schedule["종료교시"])):
+        return False
+    return (int(schedule["시작교시"]) <= int(schedule["종료교시"])
+            and WEEKDAYS[datetime.date.fromisoformat(start).weekday()] in weekdays.split(" ")
+            and WEEKDAYS[datetime.date.fromisoformat(end).weekday()] in weekdays.split(" "))
+
+
+def is_capacity(capacity):
+    """정원 문자열의 문법을 검사한다."""
+    return isinstance(capacity, str) and re.fullmatch(r"0|[1-9][0-9]?", capacity) is not None
+
+
+def is_valid_capacity(capacity):
+    """정원이 올바른 형식이며 1~99인지 검사한다."""
+    return is_capacity(capacity) and 1 <= int(capacity) <= 99
 
 
 # ---- 비교 · 계산 ----
@@ -395,14 +537,79 @@ def is_valid_capacity(capacity):    pass   # 4.13   의미 — 1 이상
 # compare_datetime(a, b) 가 -1 을 돌려줄 때 a 가 먼저인지 b 가 먼저인지
 # 문서를 봐야 알게 되는 걸 막으려는 것이다.
 
-def same_phone(phone1, phone2):                pass  # 4.5    "-" 떼고 비교
-def same_weekday_list(weekdays1, weekdays2):   pass  # 4.11.1 순서 무시
-def sort_weekday_list(weekdays):               pass  # 4.11.1 표준형 (월 수 금)
-def compare_datetime(dt1, dt2):                pass  # 4.9    dt1 이 먼저면 -1, 같으면 0, 나중이면 1
-def is_schedule_conflict(schedule1, schedule2): pass # 4.12.1
-def display_class_status(class_):              pass  # 4.6.3  모집중/진행중/종료/폐강
-def count_enrolled(class_id):                  pass  # 4.13   "수강중" 등록 수
-def next_id(prefix):                           pass  # 5.1.13 최대값 + 1, 없으면 0001
+def same_phone(phone1, phone2):
+    """하이픈을 제외한 연락처를 비교한다."""
+    return phone1.replace("-", "") == phone2.replace("-", "")
+
+
+def same_weekday_list(weekdays1, weekdays2):
+    """순서를 무시하고 요일 목록을 비교한다."""
+    return set(weekdays1.split(" ")) == set(weekdays2.split(" "))
+
+
+def sort_weekday_list(weekdays):
+    """검증된 요일 목록을 월요일부터 일요일 순서로 정렬한다."""
+    return " ".join(sorted(weekdays.split(" "), key=WEEKDAYS.index))
+
+
+def compare_datetime(dt1, dt2):
+    """검증된 일시 두 개를 비교해 -1, 0, 1을 반환한다."""
+    return (dt1 > dt2) - (dt1 < dt2)
+
+
+def is_schedule_conflict(schedule1, schedule2):
+    """검증된 두 일정이 실제 수업 날짜와 교시를 공유하는지 판단한다."""
+    start = max(schedule1["시작날짜"], schedule2["시작날짜"])
+    end = min(schedule1["종료날짜"], schedule2["종료날짜"])
+    if start > end:
+        return False
+    if max(int(schedule1["시작교시"]), int(schedule2["시작교시"])) > min(
+            int(schedule1["종료교시"]), int(schedule2["종료교시"])):
+        return False
+    common = set(schedule1["요일목록"].split(" ")) & set(schedule2["요일목록"].split(" "))
+    first = datetime.date.fromisoformat(start)
+    days = (datetime.date.fromisoformat(end) - first).days
+    return any((WEEKDAYS.index(day) - first.weekday()) % 7 <= days for day in common)
+
+
+def display_class_status(class_):
+    """가상 현재 날짜를 기준으로 반의 표시 상태를 반환한다."""
+    if class_["반상태"] == "폐강":
+        return "폐강"
+    today = now()[:10]
+    if today < class_["시작날짜"]:
+        return "모집중"
+    if today <= class_["종료날짜"]:
+        return "진행중"
+    return "종료"
+
+
+def count_enrolled(class_id):
+    """해당 반에서 취소되지 않은 수강 등록 수를 반환한다."""
+    return sum(e["반ID"] == class_id and e["등록상태"] == "수강중" for e in read_enrollments())
+
+
+def next_id(prefix):
+    """현재 최대 번호 다음의 내부 ID를 반환한다."""
+    paths = {ID_STUDENT: STUDENTS, ID_TEACHER: TEACHERS, ID_SUBJECT: SUBJECTS,
+             ID_CLASS: CLASSES, ID_ENROLLMENT: ENROLLMENTS}
+    if prefix not in paths:
+        raise ValueError("정의되지 않은 내부 ID 종류입니다.")
+    path = paths[prefix]
+    records = _read_table(path)
+    problems = check_duplicate_ids(path, records)
+    if problems:
+        raise problems[0]
+    field = HEADERS[path][0]
+    maximum = 0
+    for lineno, record in enumerate(records, start=2):
+        value = record[field]
+        if not is_inner_id(value, prefix):
+            raise errors.DataError(errors.E_FILE_FORMAT, f"{path.name} {lineno}행: ID 형식 오류", 4)
+        maximum = max(maximum, int(value[1:]))
+    if maximum == 9999:
+        raise errors.DataError(errors.E_SAVE, f"{path.name}: ID 번호가 9999에 도달하여 등록할 수 없습니다.")
+    return f"{prefix}{maximum + 1:04d}"
 
 # display_class_status 는 가상 일시를 인자로 받지 않는다.
 # README 팀 합의대로 함수 안에서 now() 를 부른다.
@@ -450,21 +657,243 @@ def is_backward(new_dt):
 
 # ---- 무결성 검사 — 개별 검사는 2, 전체 연결은 5 ----
 
+def _problem(path, lineno, code, message, stage):
+    """파일·행·검사 단계를 포함한 오류를 만든다."""
+    return errors.DataError(code, f"{path.name} {lineno}행: {message}", stage)
+
+
+def check_fields(path, records):
+    """읽기에 성공한 표의 필드 형식과 값 범위를 검사한다."""
+    validators = {
+        "사용자ID": is_user_id, "비밀번호": is_password, "사용자역할": is_role,
+        "이름": is_person_name, "연락처": is_phone, "학생상태": is_student_status,
+        "강사상태": is_teacher_status, "과목명": is_subject_name, "반이름": is_class_name,
+        "요일목록": is_valid_weekday_list, "시작교시": is_valid_period,
+        "종료교시": is_valid_period, "시작날짜": is_date, "종료날짜": is_date,
+        "정원": is_valid_capacity, "반상태": is_class_status, "등록일시": is_datetime,
+        "등록상태": is_enroll_status,
+        "취소일시": lambda value: value == EMPTY or is_datetime(value),
+    }
+    prefixes = {"학생ID": ID_STUDENT, "강사ID": ID_TEACHER, "과목ID": ID_SUBJECT,
+                "반ID": ID_CLASS, "등록ID": ID_ENROLLMENT}
+    problems = []
+    for lineno, record in enumerate(records, start=2):
+        for field in HEADERS[path]:
+            value = record.get(field)
+            valid = isinstance(value, str)
+            if valid:
+                valid = (is_inner_id(value, prefixes[field]) if field in prefixes
+                         else validators[field](value))
+            if not valid:
+                problems.append(_problem(path, lineno, errors.E_FILE_FORMAT,
+                                         f"{field} 형식 또는 범위 오류", 4))
+    return problems
+
+
+def check_duplicate_ids(path, records):
+    """파일의 첫 번째 필드에 중복 ID가 있는지 검사한다."""
+    field, seen, problems = HEADERS[path][0], set(), []
+    for lineno, record in enumerate(records, start=2):
+        value = record[field]
+        if value in seen:
+            problems.append(_problem(path, lineno, errors.E_DUP_ID, f"{field} 중복: {value}", 5))
+        seen.add(value)
+    return problems
+
+
+def check_references(tables):
+    """형식·ID 검사를 통과한 파일들의 참조와 계정 연결을 검사한다."""
+    problems = []
+    indexes = {path: {r[HEADERS[path][0]]: r for r in records}
+               for path, records in tables.items()}
+    links = ((STUDENTS, "사용자ID", USERS), (TEACHERS, "사용자ID", USERS),
+             (CLASSES, "과목ID", SUBJECTS), (CLASSES, "강사ID", TEACHERS),
+             (ENROLLMENTS, "학생ID", STUDENTS), (ENROLLMENTS, "반ID", CLASSES))
+    for source, field, target in links:
+        if source not in tables or target not in tables:
+            continue
+        for lineno, record in enumerate(tables[source], start=2):
+            if record[field] not in indexes[target]:
+                problems.append(_problem(source, lineno, errors.E_REF_MISSING,
+                                         f"{target.name}에 없는 {field}: {record[field]}", 6))
+    for path, role in ((STUDENTS, "학생"), (TEACHERS, "강사")):
+        if path not in tables:
+            continue
+        seen = set()
+        for lineno, record in enumerate(tables[path], start=2):
+            user_id = record["사용자ID"]
+            if user_id in seen:
+                problems.append(_problem(path, lineno, errors.E_DUP_ID,
+                                         f"사용자ID 중복 연결: {user_id}", 6))
+            seen.add(user_id)
+            user = indexes.get(USERS, {}).get(user_id)
+            if user is not None and user["사용자역할"] != role:
+                problems.append(_problem(path, lineno, errors.E_ROLE_INVALID,
+                                         f"사용자 {user_id}의 역할이 {role}가 아닙니다.", 6))
+    if USERS in tables:
+        users = tables[USERS]
+        if sum(u["사용자역할"] == "원장" for u in users) != 1:
+            problems.append(_problem(USERS, 1, errors.E_ROLE_INVALID,
+                                     "원장 계정은 정확히 하나여야 합니다.", 6))
+        for lineno, user in enumerate(users, start=2):
+            role = user["사용자역할"]
+            if role == "원장":
+                continue
+            path = STUDENTS if role == "학생" else TEACHERS
+            if path in tables and not any(r["사용자ID"] == user["사용자ID"] for r in tables[path]):
+                problems.append(_problem(USERS, lineno, errors.E_REF_MISSING,
+                                         f"{path.name}에 연결된 {role} 레코드가 없습니다.", 6))
+    return problems
+
+
+def check_relations(tables):
+    """형식·ID 검사를 통과한 데이터의 일정·정원·수강 관계를 검사한다."""
+    problems, valid_classes, open_classes, names = [], {}, [], set()
+    for lineno, class_ in enumerate(tables.get(CLASSES, []), start=2):
+        if not is_schedule(class_):
+            problems.append(_problem(CLASSES, lineno, errors.E_FILE_FORMAT, "수업 일정의 의미 규칙 오류", 7))
+            continue
+        valid_classes[class_["반ID"]] = class_
+        if class_["반상태"] != "개설":
+            continue
+        name = (class_["과목ID"], class_["반이름"])
+        if name in names:
+            problems.append(_problem(CLASSES, lineno, errors.E_CLASS_NAME_DUPLICATE,
+                                     "같은 과목의 개설된 반 이름이 중복됩니다.", 7))
+        names.add(name)
+        for other_line, other in open_classes:
+            if class_["강사ID"] == other["강사ID"] and is_schedule_conflict(class_, other):
+                problems.append(_problem(CLASSES, lineno, errors.E_TEACHER_CONFLICT,
+                                         f"{other_line}행 반과 강사 일정 충돌", 7))
+        open_classes.append((lineno, class_))
+    students = {s["학생ID"]: s for s in tables.get(STUDENTS, [])}
+    classes = {c["반ID"]: c for c in tables.get(CLASSES, [])}
+    counts, pairs, student_classes = {}, set(), {}
+    for lineno, enrollment in enumerate(tables.get(ENROLLMENTS, []), start=2):
+        cancelled = enrollment["등록상태"] == "취소"
+        cancel_dt = enrollment["취소일시"]
+        if cancelled:
+            if cancel_dt == EMPTY or cancel_dt < enrollment["등록일시"]:
+                problems.append(_problem(ENROLLMENTS, lineno, errors.E_FILE_FORMAT,
+                                         "취소일시가 없거나 등록일시보다 이전입니다.", 7))
+            continue
+        if cancel_dt != EMPTY:
+            problems.append(_problem(ENROLLMENTS, lineno, errors.E_FILE_FORMAT,
+                                     "수강중 등록의 취소일시는 '-'여야 합니다.", 7))
+        student_id, class_id = enrollment["학생ID"], enrollment["반ID"]
+        student = students.get(student_id)
+        if student is not None and student["학생상태"] == "퇴원":
+            problems.append(_problem(ENROLLMENTS, lineno, errors.E_FILE_FORMAT,
+                                     "퇴원 학생의 수강중 등록이 남아 있습니다.", 7))
+        related_class = classes.get(class_id)
+        if related_class is not None and related_class["반상태"] == "폐강":
+            problems.append(_problem(ENROLLMENTS, lineno, errors.E_FILE_FORMAT,
+                                     "폐강 반의 수강중 등록이 남아 있습니다.", 7))
+        pair = (student_id, class_id)
+        if pair in pairs:
+            problems.append(_problem(ENROLLMENTS, lineno, errors.E_ALREADY_ENROLLED,
+                                     "같은 학생·반의 수강중 등록이 중복됩니다.", 7))
+        pairs.add(pair)
+        counts[class_id] = counts.get(class_id, 0) + 1
+        class_ = valid_classes.get(class_id)
+        if class_ is None or class_["반상태"] != "개설":
+            continue
+        for other_line, other in student_classes.get(student_id, []):
+            if class_id != other["반ID"] and is_schedule_conflict(class_, other):
+                problems.append(_problem(ENROLLMENTS, lineno, errors.E_STUDENT_CONFLICT,
+                                         f"{other_line}행 수강 등록과 학생 일정 충돌", 7))
+        student_classes.setdefault(student_id, []).append((lineno, class_))
+    if ENROLLMENTS in tables:
+        for lineno, class_ in enumerate(tables.get(CLASSES, []), start=2):
+            if counts.get(class_["반ID"], 0) > int(class_["정원"]):
+                problems.append(_problem(CLASSES, lineno, errors.E_CLASS_FULL, "수강중 인원이 정원을 초과합니다.", 7))
+    return problems
+
+
+def check_time_history(lines, enrollments=None):
+    """가상 일시 이력의 형식·순서와 수강 기록보다 과거인지 검사한다."""
+    problems = []
+    if not lines:
+        return [_problem(DATETIME, 1, errors.E_TIME_BACKWARD, "가상 일시 이력이 비어 있습니다.", 8)]
+    for lineno, value in enumerate(lines, start=1):
+        if not isinstance(value, str) or not is_datetime(value):
+            problems.append(_problem(DATETIME, lineno, errors.E_TIME_BACKWARD, "일시 형식 오류", 8))
+    if problems:
+        return problems
+    for lineno in range(2, len(lines) + 1):
+        if lines[lineno - 1] < lines[lineno - 2]:
+            problems.append(_problem(DATETIME, lineno, errors.E_TIME_BACKWARD, "이전 이력보다 과거입니다.", 8))
+    for lineno, enrollment in enumerate(enrollments or [], start=2):
+        fields = ["등록일시"]
+        if enrollment["등록상태"] == "취소":
+            fields.append("취소일시")
+        for field in fields:
+            value = enrollment[field]
+            if is_datetime(value) and value > lines[-1]:
+                problems.append(_problem(DATETIME, len(lines), errors.E_TIME_BACKWARD,
+                                         f"enrollments.txt {lineno}행 {field}보다 과거입니다.", 8))
+    return problems
+
+
 def check_integrity():
-    """5.4 의 ①~⑧ 을 검사한다.
-
-    오류를 찾으면 바로 멈추지 말고 errors.DataError 를 목록에 모아서 돌려준다.
-    오류가 없으면 빈 목록을 돌려준다.
-
-    6.7.4 — "여러 파일에 걸쳐 오류가 있는 경우, 발견되는 오류를 모두 모아
-    한 번에 출력한 뒤 종료한다. 다만 어떤 파일의 문법 오류로 인해 검사할 수
-    없게 된 뒤 단계의 참조 오류는 함께 출력하지 않는다."
-
-    읽기 함수(read_*)는 파일 하나에서 첫 오류를 만나면 DataError 를 던지므로,
-    파일마다 try 로 받아서 목록에 넣고 다음 파일로 넘어간다.
-    각 오류에는 몇 단계에서 나왔는지 e.stage 에 1~8 을 넣는다.
-    6.6.6 화면이 "[3/8] ... FAIL", "(classes.txt 제외)", "오류 2건 (파일 문법 1, 의미 규칙 1)"
-    처럼 단계별로 출력하기 때문이다. 문법 오류 때문에 뒤 단계에서 빠진 파일도 알 수 있어야 한다.
-    시작할 때의 출력과 종료는 main.py 가, 6.6.6 메뉴 화면은 그 담당이 한다.
-    """
-    pass
+    """전체 파일을 단계별 검사하고, 사용할 수 없는 파일을 제외해 오류를 모은다."""
+    problems, readable, tables, excluded = [], [], {}, []
+    for path in list(HEADERS) + [DATETIME]:
+        for suffix in (".recovery", ".recovery-missing"):
+            backup = path.with_name(path.name + suffix)
+            if backup.exists():
+                problems.append(errors.DataError(errors.E_SAVE,
+                    f"{path.name}: 미완료 저장의 복구 파일이 있습니다. 복구 후 다시 실행하세요: {backup}", 1))
+        try:
+            _read_text(path)
+        except errors.DataError as error:
+            error.stage = 2 if error.code == errors.E_FILE_FORMAT else 1
+            problems.append(error)
+            excluded.append(path.name)
+        except OSError:
+            problems.append(_problem(path, 1, errors.E_FILE_READ, "파일을 읽을 수 없습니다.", 1))
+            excluded.append(path.name)
+        else:
+            readable.append(path)
+    for path in HEADERS:
+        if path not in readable:
+            continue
+        try:
+            records = _read_table(path)
+        except errors.DataError as error:
+            error.stage = 3
+            problems.append(error)
+            excluded.append(path.name)
+            continue
+        except OSError:
+            problems.append(_problem(path, 1, errors.E_FILE_READ, "파일을 읽을 수 없습니다.", 1))
+            excluded.append(path.name)
+            continue
+        field_errors = check_fields(path, records)
+        if field_errors:
+            problems.extend(field_errors)
+            excluded.append(path.name)
+            continue
+        duplicate_errors = check_duplicate_ids(path, records)
+        if duplicate_errors:
+            problems.extend(duplicate_errors)
+            excluded.append(path.name)
+            continue
+        tables[path] = records
+    problems.extend(check_references(tables))
+    problems.extend(check_relations(tables))
+    if DATETIME in readable:
+        try:
+            lines = read_datetime()
+        except errors.DataError as error:
+            error.stage = 8 if error.code == errors.E_TIME_BACKWARD else 1
+            problems.append(error)
+            excluded.append(DATETIME.name)
+        except OSError:
+            problems.append(_problem(DATETIME, 1, errors.E_FILE_READ, "파일을 읽을 수 없습니다.", 1))
+            excluded.append(DATETIME.name)
+        else:
+            problems.extend(check_time_history(lines, tables.get(ENROLLMENTS)))
+    for error in problems:
+        error.excluded_files = tuple(excluded)
+    return sorted(problems, key=lambda error: error.stage)
