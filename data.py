@@ -13,10 +13,12 @@ admin.py 와 enrollment.py 가 둘 다 필요한 계산(수강 인원 세기, �
 "from admin import ..." 처럼 쓰는 순간 실제로 켜지지 않는다.
 
 이미 동작하는 것: read_*, write_*, append_datetime, write_datetime, create_data_dir, cleanup_tmp, now
-비어 있는 것: write_all, 값 검사, 비교·계산, 역행 판정, 무결성 검사
+구현 완료: write_all, 값 검사, 비교·계산, 역행 판정, 무결성 검사
 """
 
 import datetime
+from contextvars import ContextVar
+from functools import wraps
 import os
 import re
 from pathlib import Path
@@ -64,7 +66,7 @@ TMP_SUFFIX = ".tmp"
 
 # ---- 파일 읽기 : 레코드 딕셔너리 리스트를 돌려준다 ----
 
-def _read_text(path):
+def _read_text_unchecked(path):
     """파일 전체를 문자열로 읽는다. 없음·권한·인코딩·BOM 을 검사한다. (5.4 ①②)"""
     try:
         text = path.read_text(encoding="utf-8")
@@ -103,7 +105,7 @@ def _split_lines(path):
     return lines
 
 
-def _read_table(path):
+def _read_table_unchecked(path):
     """헤더가 있는 탭 구분 파일을 읽어 딕셔너리 리스트로 돌려준다. (5.1, 5.2)"""
     header = HEADERS[path]
     lines = _split_lines(path)
@@ -136,12 +138,12 @@ def _read_table(path):
     return records
 
 
-def read_users():        return _read_table(USERS)        # 5.2.1
-def read_students():     return _read_table(STUDENTS)     # 5.2.2
-def read_teachers():     return _read_table(TEACHERS)     # 5.2.3
-def read_subjects():     return _read_table(SUBJECTS)     # 5.2.4
-def read_classes():      return _read_table(CLASSES)      # 5.2.5
-def read_enrollments():  return _read_table(ENROLLMENTS)  # 5.2.6
+def read_users(): return sorted(_read_table(USERS), key=lambda row: row["사용자ID"])
+def read_students(): return sorted(_read_table(STUDENTS), key=lambda row: row["학생ID"])
+def read_teachers(): return sorted(_read_table(TEACHERS), key=lambda row: row["강사ID"])
+def read_subjects(): return sorted(_read_table(SUBJECTS), key=lambda row: row["과목ID"])
+def read_classes(): return sorted(_read_table(CLASSES), key=lambda row: row["반ID"])
+def read_enrollments(): return sorted(_read_table(ENROLLMENTS), key=lambda row: row["등록ID"])
 
 
 def read_datetime():
@@ -179,7 +181,7 @@ def now():
 #     if not data.write_students(students):
 #         print(f"[{errors.E_SAVE}] {errors.ERROR_MESSAGES[errors.E_SAVE]}")
 
-def _write_text(path, text):
+def _write_text_unchecked(path, text):
     """임시 파일에 쓴 뒤 os.replace() 로 교체한다. (6.7)
 
     open(path, "w") 로 원본을 바로 열면 그 순간 내용이 비워진다.
@@ -203,7 +205,7 @@ def _write_text(path, text):
     return True
 
 
-def _write_table(path, records):
+def _write_table_unchecked(path, records):
     header = HEADERS[path]
     lines = ["\t".join(header)]
     for rec in records:
@@ -291,7 +293,7 @@ def cleanup_tmp():
     return True
 
 
-def write_all(changes):
+def _write_all_unchecked(changes):
     """여러 파일을 임시 저장한 뒤 교체하고, 처리 가능한 실패 시 원본을 복구한다."""
     contents = {}
     for path, records in changes.items():
@@ -897,3 +899,127 @@ def check_integrity():
     for error in problems:
         error.excluded_files = tuple(excluded)
     return sorted(problems, key=lambda error: error.stage)
+
+
+# ---- 작업 경계 검증: 역할 확인, 외부 수정 감지, 저장 전 관계 검증 ----
+_snapshot = ContextVar("operation_snapshot", default=None)
+
+
+def snapshot():
+    try:
+        return {p: p.read_bytes() for p in [*HEADERS, DATETIME]}
+    except OSError as exc:
+        raise errors.DataError(errors.E_FILE_READ, "데이터 파일을 읽을 수 없습니다.", 1) from exc
+
+def require_integrity():
+    problems = check_integrity()
+    if problems:
+        raise errors.DataError(problems[0].code,
+                              "\n".join(f"[{e.code}] {e.message}" for e in problems),
+                              problems[0].stage)
+
+def _read_text(path):
+    try:
+        return _read_text_unchecked(path)
+    except OSError as exc:
+        raise errors.DataError(errors.E_FILE_READ, f"{path.name}: 파일을 읽을 수 없습니다.", 1) from exc
+
+def _read_table(path):
+    rows = _read_table_unchecked(path)
+    for lineno, row in enumerate(rows, 2):
+        for field, value in row.items():
+            if not value or value != value.strip(" ") or "  " in value:
+                raise errors.DataError(errors.E_FILE_FORMAT,
+                                       f"{path.name} {lineno}행: {field} 빈 값 또는 공백 문법 오류", 3)
+    return rows
+
+def require_unchanged():
+    before = _snapshot.get()
+    if before is not None and snapshot() != before:
+        # 깨진 파일은 계속 진행하지 않고, 정상적인 외부 수정은 해당 작업만 취소한다.
+        require_integrity()
+        raise errors.DataError(errors.E_CONCURRENT_EDIT,
+                               errors.ERROR_MESSAGES[errors.E_CONCURRENT_EDIT])
+
+def validate_changes(changes):
+    tables = {p: changes.get(p, _read_table(p)) for p in HEADERS}
+    problems = []
+    for path, rows in tables.items():
+        problems.extend(check_fields(path, rows))
+        if not problems:
+            problems.extend(check_duplicate_ids(path, rows))
+    if not problems:
+        problems.extend(check_references(tables))
+        problems.extend(check_relations(tables))
+        problems.extend(check_time_history(read_datetime(), tables[ENROLLMENTS]))
+    if problems:
+        raise problems[0]
+
+def write_all(changes):
+    if _snapshot.get() is None:
+        return _write_all_unchecked(changes)
+    require_unchanged()
+    validate_changes(changes)
+    result = _write_all_unchecked(changes)
+    if result:
+        _snapshot.set(snapshot())
+    return result
+
+def _write_table(path, records):
+    if _snapshot.get() is None:
+        return _write_table_unchecked(path, records)  # 최초 실행의 헤더 생성도 지원
+    return write_all({path: records})
+
+def _write_text(path, text):
+    if _snapshot.get() is not None:
+        require_unchanged()
+        if path == DATETIME:
+            lines = text.rstrip("\n").split("\n")
+            old = read_datetime()
+            if lines != old and lines[:len(old)] != old:
+                raise errors.DataError(errors.E_TIME_BACKWARD, "기존 가상 일시 이력은 변경할 수 없습니다.", 8)
+            problems = check_time_history(lines, read_enrollments())
+            if problems:
+                raise problems[0]
+    result = _write_text_unchecked(path, text)
+    if result and _snapshot.get() is not None:
+        _snapshot.set(snapshot())
+    return result
+
+def _guard_operation(function, role):
+    """단일 화면 작업에 적용한다. 긴 하위 메뉴 루프 전체에는 적용하지 않는다."""
+    @wraps(function)
+    def guarded(user):
+        require_integrity()
+        actual = next((u for u in read_users() if u["사용자ID"] == user.get("사용자ID")), None)
+        if actual is None or actual["사용자역할"] != role or user.get("사용자역할") != role:
+            print(f"[{errors.E_NO_PERMISSION}] 이 기능을 사용할 권한이 없습니다.")
+            return
+        if role != "원장":
+            reader, state, active = ((read_students, "학생상태", "재원") if role == "학생"
+                                      else (read_teachers, "강사상태", "재직"))
+            person = next(p for p in reader() if p["사용자ID"] == actual["사용자ID"])
+            if person[state] != active:
+                print(f"[{errors.E_NO_PERMISSION}] 사용할 수 없는 계정입니다.")
+                return
+        token = _snapshot.set(snapshot())
+        try:
+            return function(actual)
+        except errors.OperationCancelled:
+            print("작업을 취소했습니다. 변경된 내용이 없습니다.")
+        except errors.DataError as exc:
+            if exc.code == errors.E_CONCURRENT_EDIT:
+                print(f"[{exc.code}] {exc.message}")
+                return
+            # ID 소진은 파일 손상이 아니라 해당 등록 작업의 실패다.
+            if exc.code == errors.E_SAVE and "9999" in exc.message:
+                print(f"[{exc.code}] {exc.message}")
+                return
+            raise
+        finally:
+            _snapshot.reset(token)
+    return guarded
+
+def operation(role):
+    """업무 함수에 @data.operation(역할)로 적용한다."""
+    return lambda function: _guard_operation(function, role)

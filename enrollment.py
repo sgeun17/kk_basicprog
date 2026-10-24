@@ -20,6 +20,7 @@ import ui
 
 # ---- 6.4 학생 메뉴 ----
 # 6.4.1
+@data.operation("학생")
 def show_my_info(user):
     """로그인한 학생의 ID와 이름을 조회한다."""
 
@@ -57,6 +58,7 @@ def show_my_info(user):
             return
 
 # 6.4.2
+@data.operation("학생")
 def show_class_detail(user):
     """선택한 반의 상세 정보를 조회한다."""
 
@@ -127,6 +129,7 @@ def show_class_detail(user):
 
 
 
+@data.operation("학생")
 def list_open_classes(user):
     """학생이 수강 신청할 수 있는 반 목록을 조회한다."""
 
@@ -290,12 +293,13 @@ def list_open_classes(user):
         print(f"수업 기간: {selected['시작날짜']}~{selected['종료날짜']}")
         print(f"현재 수강 인원: {data.count_enrolled(class_id)}")
         print(f"정원: {selected['정원']}")
-        print(f"상태: {selected['반상태']}")
-        ui.ask_menu_choice([0])
+        print(f"상태: {data.display_class_status(selected)}")
+        ui.wait_for_back()
         return
 
 
 # 6.4.4 수강 신청
+@data.operation("학생")
 def enroll_class(user):
     """로그인한 학생이 반을 수강 신청한다."""
     student = None
@@ -391,6 +395,7 @@ def enroll_class(user):
 
 
 # 6.4.5 내 수강 목록 조회
+@data.operation("학생")
 def list_my_enrollments(user):
     """로그인한 학생의 수강 등록 내역을 조회한다."""
 
@@ -463,10 +468,12 @@ def list_my_enrollments(user):
             f"수업 기간: {class_info['시작날짜']}~"
             f"{class_info['종료날짜']}"
         )
-        print(f"등록 상태: {e['등록상태']}")
+        print(f"등록 상태: {enrollment_status(e, class_info)}")
+    ui.wait_for_back()
 
 
 # 6.4.6 수강 취소
+@data.operation("학생")
 def cancel_enrollment(user):
     """로그인한 학생의 수강 등록을 취소한다."""
 
@@ -481,40 +488,30 @@ def cancel_enrollment(user):
         print(f"[{errors.E_REF_MISSING}] 학생 정보를 찾을 수 없습니다.")
         return
 
-    # 취소할 반 ID 입력
-    class_id = ui.ask_target("수강 취소할 반 ID를 입력하세요")
-
-    if class_id is None:
-        return
-
     enrollments = data.read_enrollments()
     classes = data.read_classes()
 
-    # 해당 학생의 수강 중인 등록 찾기
-    target = None
+    while True:
+        class_id = ui.ask_target("수강 취소할 반 ID를 입력하세요")
+        if class_id is None or class_id == "0":
+            return
 
-    for e in enrollments:
-        if (
-            e["학생ID"] == student["학생ID"]
-            and e["반ID"] == class_id
-            and e["등록상태"] == "수강중"
-        ):
-            target = e
-            break
+        target = next(
+            (e for e in enrollments
+             if e["학생ID"] == student["학생ID"]
+             and e["반ID"] == class_id
+             and e["등록상태"] == "수강중"),
+            None,
+        )
+        if target is None:
+            print(f"[{errors.E_REF_MISSING}] 해당 수강 정보를 찾을 수 없습니다.")
+            continue
 
-    if target is None:
-        print(f"[{errors.E_REF_MISSING}] 해당 수강 정보를 찾을 수 없습니다.")
-        return
-
-    # 반 정보 찾기
-    class_info = next(
-        (c for c in classes if c["반ID"] == class_id),
-        None
-    )
-
-    if class_info is None:
-        print(f"[{errors.E_REF_MISSING}] 반 정보를 찾을 수 없습니다.")
-        return
+        class_info = next((c for c in classes if c["반ID"] == class_id), None)
+        if class_info is None:
+            print(f"[{errors.E_REF_MISSING}] 반 정보를 찾을 수 없습니다.")
+            continue
+        break
 
     # 수강 취소 대상 확인
     print()
@@ -549,6 +546,7 @@ def cancel_enrollment(user):
 # ---- 6.5 강사 메뉴 ----
 
 # 6.5.1 담당 반 조회
+@data.operation("강사")
 def list_teacher_classes(user):
     """로그인한 강사가 담당하는 반 목록을 조회한다."""
 
@@ -594,9 +592,11 @@ def list_teacher_classes(user):
         current_count = data.count_enrolled(c["반ID"])
         print(f"현재 인원/정원: {current_count if current_count is not None else '미구현'}/{c['정원']}")
         print(f"반 상태: {c['반상태']}")
+    ui.wait_for_back()
 
 
 # 6.5.2 담당 반 수강생 조회
+@data.operation("강사")
 def list_class_students(user):
     """강사가 담당하는 반의 수강생을 조회한다."""
     teacher = next((t for t in data.read_teachers() if t["사용자ID"] == user["사용자ID"]), None)
@@ -635,7 +635,7 @@ def list_class_students(user):
         active = [e for e in data.read_enrollments() if e["반ID"] == class_id and e["등록상태"] == "수강중"]
         if not active:
             print("현재 수강 중인 학생이 없습니다.")
-        for e in active:
+        for e in sorted(active, key=lambda row: row["학생ID"]):
             student = next((s for s in students if s["학생ID"] == e["학생ID"]), None)
             if student is None:
                 print(f"[{errors.E_REF_MISSING}] 학생 정보를 찾을 수 없습니다.")
@@ -644,6 +644,7 @@ def list_class_students(user):
 
 
 # 6.5.3 수업 일정 조회
+@data.operation("강사")
 def show_teacher_schedule(user):
     """강사가 현재 진행 중인 담당 반의 수업 일정을 조회한다."""
 
@@ -657,94 +658,48 @@ def show_teacher_schedule(user):
         print(f"[{errors.E_REF_MISSING}] 강사 정보를 찾을 수 없습니다.")
         return
 
+    subjects = {s["과목ID"]: s["과목명"] for s in data.read_subjects()}
     today = data.now()[:10]
-
-    classes = [
-        c for c in data.read_classes()
-        if (
-            c["강사ID"] == teacher["강사ID"]
-            and c["반상태"] == "개설"
-            and c["시작날짜"] <= today <= c["종료날짜"]
-        )
-    ]
-
-    weekday_order = {
-        "월": 0, "화": 1, "수": 2, "목": 3,
-        "금": 4, "토": 5, "일": 6
-    }
-
-    def schedule_key(c):
-        days = [
-            weekday_order[d]
-            for d in c["요일목록"]
-            if d in weekday_order
-        ]
-        return (
-            min(days) if days else 7,
-            int(c["시작교시"]),
-            c["반ID"]
-        )
-
-    classes.sort(key=schedule_key)
+    rows = []
+    for class_ in data.read_classes():
+        if (class_["강사ID"] == teacher["강사ID"]
+                and class_["반상태"] == "개설"
+                and class_["시작날짜"] <= today <= class_["종료날짜"]):
+            for weekday in class_["요일목록"].split():
+                rows.append((data.WEEKDAYS.index(weekday),
+                             int(class_["시작교시"]), class_["반ID"], class_))
 
     print()
     print("===== 강사 메뉴 > 수업 일정 조회 =====")
-
-    if not classes:
+    if not rows:
         print("현재 진행 중인 수업이 없습니다.")
-        return
-
-    for c in classes:
-        print(
-            f"{c['요일목록']} | "
-            f"{c['시작교시']}~{c['종료교시']}교시 | "
-            f"{c['반ID']} | {c['반이름']}"
-        )
+    for weekday, period, class_id, class_ in sorted(rows, key=lambda row: row[:3]):
+        print(f"{data.WEEKDAYS[weekday]} | {period}~{class_['종료교시']}교시 | "
+              f"{class_id} | {class_['반이름']} | {subjects[class_['과목ID']]}")
+    ui.wait_for_back()
 
 
 
 # ---- 6.6.5 원장 메뉴: 수강 등록 관리 ----
 
 # 전체 수강 등록 조회
+@data.operation("원장")
 def list_all_enrollments(user):
     """원장이 전체 수강 등록 기록을 조회한다."""
 
     enrollments = data.read_enrollments()
-    students = data.read_students()
-    classes = data.read_classes()
 
     print()
     print("===== 원장 메뉴 > 전체 수강 등록 조회 =====")
 
     if not enrollments:
         print("등록된 수강 등록이 없습니다.")
-        return
-
-    # 등록 ID 순서로 정렬
-    for e in sorted(enrollments, key=lambda x: x["등록ID"]):
-        student = next(
-            (s for s in students if s["학생ID"] == e["학생ID"]),
-            None
-        )
-        class_info = next(
-            (c for c in classes if c["반ID"] == e["반ID"]),
-            None
-        )
-
-        student_name = student["이름"] if student else "정보 없음"
-        class_name = class_info["반이름"] if class_info else "정보 없음"
-
-        print(
-            f"{e['등록ID']} | "
-            f"{e['학생ID']}({student_name}) | "
-            f"{e['반ID']}({class_name}) | "
-            f"{e['등록일시']} | "
-            f"{e['등록상태']} | "
-            f"취소일시: {e['취소일시']}"
-        )
+    else:
+        print_enrollments(enrollments)
 
 
 # 반별 수강 등록 조회
+@data.operation("원장")
 def list_enrollments_by_class(user):
     """원장이 특정 반의 수강 등록 기록을 조회한다."""
 
@@ -798,6 +753,7 @@ def list_enrollments_by_class(user):
 
 
 # 학생별 수강 등록 조회
+@data.operation("원장")
 def list_enrollments_by_student(user):
     """원장이 특정 학생의 수강 등록 기록을 조회한다."""
 
@@ -851,6 +807,7 @@ def list_enrollments_by_student(user):
 
 
 # 원장 수강 등록 취소
+@data.operation("원장")
 def admin_cancel_enrollment(user):
     """원장이 등록 ID를 지정해 수강 등록을 취소한다."""
 
@@ -897,3 +854,86 @@ def admin_cancel_enrollment(user):
         return
 
     print(f"[OK_ENROLL_CANCEL] 수강 등록 {enrollment_id}이 취소되었습니다.")
+
+
+# ---- 통합 연결 보완: 추가 메뉴 연결과 공통 출력 ----
+
+def manage_enrollments(user):
+    """원장 수강 등록 조회·취소 하위 메뉴."""
+    if user.get("사용자역할") != "원장":
+        _print_error(errors.E_NO_PERMISSION, "이 기능을 사용할 권한이 없습니다.")
+        return
+    actions = {
+        1: list_all_enrollments,
+        2: list_enrollments_by_class,
+        3: list_enrollments_by_student,
+        4: admin_cancel_enrollment,
+    }
+    while True:
+        print("===== 원장 메뉴 > 수강 등록 조회·취소 =====")
+        print("1. 전체 수강 등록 조회\n2. 반별 수강 등록 조회\n3. 학생별 수강 등록 조회\n4. 수강 등록 취소\n0. 이전 메뉴")
+        choice = ui.ask_menu_choice([0, *actions])
+        if choice == 0:
+            return
+        if choice in actions:
+            actions[choice](user)
+
+
+@data.operation("강사")
+def list_my_classes(user):
+    """강사 메뉴에서 담당 반 조회 기능을 연결한다."""
+    return list_teacher_classes(user)
+
+
+@data.operation("강사")
+def show_teaching_schedule(user):
+    """강사 메뉴에서 수업 일정 조회 기능을 연결한다."""
+    return show_teacher_schedule(user)
+
+
+def class_detail(class_):
+    subject = next(s for s in data.read_subjects() if s["과목ID"] == class_["과목ID"])
+    teacher = next(t for t in data.read_teachers() if t["강사ID"] == class_["강사ID"])
+    print(f"반 ID: {class_['반ID']} / 반 이름: {class_['반이름']} / 과목명: {subject['과목명']}")
+    print(f"담당 강사: {teacher['이름']} / 수업 요일: {data.sort_weekday_list(class_['요일목록'])}")
+    print(f"교시: {class_['시작교시']}~{class_['종료교시']}교시 / 수업 기간: {class_['시작날짜']}~{class_['종료날짜']}")
+    print(f"현재 인원/정원: {data.count_enrolled(class_['반ID'])}/{class_['정원']} / 반 상태: {data.display_class_status(class_)}")
+
+
+def enrollment_status(enrollment, class_):
+    if enrollment["등록상태"] == "취소":
+        return "취소"
+    return "수강 완료" if data.display_class_status(class_) == "종료" else "수강중"
+
+
+def print_enrollments(rows):
+    students = {student["학생ID"]: student for student in data.read_students()}
+    classes = {class_["반ID"]: class_ for class_ in data.read_classes()}
+    subjects = {subject["과목ID"]: subject["과목명"] for subject in data.read_subjects()}
+    print("등록ID | 학생ID 이름 | 반ID 과목 반이름 | 요일 교시 | 등록일시 | 상태 | 취소일시")
+    for enrollment in sorted(rows, key=lambda row: row["등록ID"]):
+        class_ = classes[enrollment["반ID"]]
+        student = students[enrollment["학생ID"]]
+        print(
+            f"{enrollment['등록ID']} | {student['학생ID']} {student['이름']} | "
+            f"{class_['반ID']} {subjects[class_['과목ID']]} {class_['반이름']} | "
+            f"{data.sort_weekday_list(class_['요일목록'])} "
+            f"{class_['시작교시']}~{class_['종료교시']}교시 | "
+            f"{enrollment['등록일시']} | {enrollment_status(enrollment, class_)} | "
+            f"{enrollment['취소일시']}"
+        )
+
+
+def ask_record(label, rows, field):
+    while True:
+        value = ui.ask_target(f"조회할 {label} ID를 입력하세요")
+        if value is None or value == "0":
+            return None
+        record = next((row for row in rows if row[field] == value), None)
+        if record is not None:
+            return record
+        _print_error(errors.E_REF_MISSING, f"존재하지 않는 {label} ID입니다.")
+
+
+def _print_error(code, message=None):
+    print(f"[{code}] {message or errors.ERROR_MESSAGES[code]}")

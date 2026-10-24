@@ -19,8 +19,7 @@
 메뉴에 연결되는 기능 함수는 로그인한 사용자 레코드를 인자로 받는다.
     enrollment.enroll_class(user)
 user["사용자ID"], user["사용자역할"] 로 누가 로그인했는지 안다.
-아직 만들어지지 않은 기능은 메뉴에서 "준비 중" 으로 표시하고,
-최종 통합 전에 전부 연결한다.
+역할별 메뉴는 아래 함수 이름을 통해 각 구현 모듈에 연결한다.
 """
 
 import getpass
@@ -155,12 +154,14 @@ def first_run():
 
 def start():
     """프로그램 시작. 남은 임시 파일 정리 → 필요하면 최초 실행 → 무결성 검사. (6.7.3, 2.3.1, 6.7.4)"""
-    data.cleanup_tmp()
+    if not data.cleanup_tmp():
+        print_error(errors.E_SAVE)
+        sys.exit(EXIT_FAIL)
 
     if not data.DATA.exists() or is_first_run_unfinished():
         first_run()
 
-    # check_integrity 는 아직 비어 있어서 None 을 돌려준다. None 과 [] 는 둘 다 통과로 본다.
+    # 모든 검사 단계에서 발견한 오류를 출력하고 시작을 중단한다.
     problems = data.check_integrity()
     if problems:
         for e in problems:
@@ -254,6 +255,7 @@ def login():
     """
     failures = 0
     while True:
+        data.require_integrity()
         print()
         print(TITLE)
         user_id = ask_login_id()
@@ -292,18 +294,12 @@ def login():
 # 역할별 메뉴 (6.1.1, 2.4, 6.6)
 # ============================================================
 
-def not_ready(user):
-    # 기획서에 없는 문장이다. 팀원 기능이 다 연결되면 이 함수와 함께 지운다.
-    print("준비 중입니다.")
+
 
 
 def feature(module, name):
-    """팀원 파일에 그 이름의 함수가 있으면 그 함수를, 아직 없으면 not_ready 를 돌려준다.
-
-    팀원이 노션에 적힌 이름 그대로 함수를 만들면 main.py 를 고치지 않아도 메뉴에 연결된다.
-    최종 통합 때 not_ready 를 지우면서 getattr 도 직접 호출로 바꾼다.
-    """
-    return getattr(module, name, not_ready)
+    """구현된 기능만 연결한다. 누락 기능을 정상 메뉴처럼 숨기지 않는다."""
+    return getattr(module, name)
 
 
 # 메뉴 번호 → (기능 파일, 함수 이름). 함수 이름은 노션에 적힌 이름과 같아야 한다.
@@ -362,29 +358,23 @@ STUDENT_SCREEN = """===== 학생 메뉴 ({name}님) =====
 0. 프로그램 종료"""
 
 
-def run_menu(user, screen, features):
-    """메뉴 화면을 보여주고 고른 기능을 실행한다. 로그아웃하면 돌아간다.
-
-    9 로그아웃, 0 종료는 모든 역할이 같다. (6.1.1, 6.2.5, 6.1.4)
-    잘못된 번호면 ui.ask_menu_choice 가 오류를 출력하고, 여기서 같은 메뉴를 다시 보여준다. (6.1.2)
-    역할마다 보여주는 기능만 다르게 해서 2.4 의 권한을 나눈다.
-    """
-    valid = list(features) + [9, 0]
+def run_menu(user, screen, actions):
     while True:
-        print()
-        print(screen)
-        choice = ui.ask_menu_choice(valid)
+        print(f"\n현재 가상 일시: {data.now()}\n{screen}")
+        choice = ui.ask_menu_choice([*actions, 9, 0])
         if choice is None:
             continue
         if choice == 9:
-            print("로그아웃되었습니다.")                 # 6.2.5 확인 없이 즉시
+            print("로그아웃되었습니다.")
             return
         if choice == 0:
             if confirm_exit():
                 exit_program()
             continue
-        module, name = features[choice]
-        feature(module, name)(user)
+        module, name = actions[choice]
+        if name != "run_integrity_check":
+            data.require_integrity()
+        getattr(module, name)(user)
 
 
 def admin_menu(user):

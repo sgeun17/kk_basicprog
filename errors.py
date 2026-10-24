@@ -111,3 +111,7 @@ class DataError(Exception):
         # 5.4 무결성 검사 몇 단계(1~8)에서 나온 오류인지.
         # 6.6.6 화면이 "[3/8] ... FAIL" 처럼 단계별로 출력하므로 필요하다.
         self.stage = stage
+
+
+class OperationCancelled(Exception):
+    """저장 전 사용자가 입력 작업을 취소했다는 신호."""

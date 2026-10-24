@@ -1,7 +1,7 @@
 """원장 기능: 학생·강사·과목·반 관리 — 담당 3 (학생 관리는 5)
 
 기획서 6.6.1 학생 관리, 6.6.2 강사 관리, 6.6.3 과목 관리, 6.6.4 반 관리를 구현한다.
-6.6.8 계정 비밀번호 관리는 아직 담당이 정해지지 않았다.
+6.6.6 무결성 검사 화면과 6.6.8 계정 비밀번호 관리를 포함한다.
 
 이 파일은 data.py, ui.py, errors.py 만 import 한다.
 enrollment.py 는 import 하지 않는다. 반 폐강·학생 퇴원 때 수강 등록을 취소하거나
@@ -21,9 +21,7 @@ enrollment.py 를 import 하면 둘이 서로 기대게 되어 구조를 설명�
 
 값 검사(data.is_*)와 공통 계산(data.next_id, data.count_enrolled,
 data.is_schedule, data.is_schedule_conflict, data.sort_weekday_list,
-data.display_class_status, data.write_all)은 담당 2 가 data.py 에 채운다.
-여기서는 그 함수들을 약속된 이름 그대로 부른다. 아직 비어 있는 동안에는
-돌려주는 값이 None 이라 검사에 걸리거나 화면에 "-" 로 보인다.
+data.display_class_status, data.write_all)은 data.py의 공통 구현을 사용한다.
 """
 
 import data
@@ -124,12 +122,8 @@ def _term(class_):
 
 
 def _class_status(class_):
-    """4.6.3 표시 상태(모집중/진행중/종료/폐강).
-
-    data.display_class_status 가 아직 비어 있으면 저장된 반 상태를 그대로 보여 준다.
-    """
-    shown = data.display_class_status(class_)
-    return class_["반상태"] if shown is None else shown
+    """4.6.3 조회용 반 상태. 저장 상태는 변경하지 않는다."""
+    return data.display_class_status(class_)
 
 
 def _enroll_status(enrollment, class_):
@@ -142,13 +136,12 @@ def _enroll_status(enrollment, class_):
 
 
 def _enrolled(class_id):
-    """4.13 그 반의 "수강중" 등록 수. data.count_enrolled 가 비어 있으면 None."""
+    """해당 반의 수강중 등록 수를 반환한다."""
     return data.count_enrolled(class_id)
 
 
 def _enrolled_text(class_id):
-    count = _enrolled(class_id)
-    return data.EMPTY if count is None else str(count)
+    return str(_enrolled(class_id))
 
 
 def _active_enrollments(enrollments, key, value):
@@ -245,6 +238,7 @@ def _print_student_rows(students):
               f"{student['사용자ID']:<14}{student['학생상태']:<6}{count}")
 
 
+@data.operation("원장")
 def list_students(user):
     """6.6.1.1 목록 조회. 재원·퇴원을 모두 학생 ID 오름차순으로 출력한다."""
     students = _sorted_by(data.read_students(), "학생ID")
@@ -255,6 +249,7 @@ def list_students(user):
     _print_student_rows(students)
 
 
+@data.operation("원장")
 def show_student(user):
     """6.6.1.2 상세 조회. 수강 내역까지 보여 준다."""
     student = _ask_id("학생 ID를 입력하세요", data.read_students(),
@@ -288,6 +283,7 @@ def show_student(user):
               f"{enrollment['등록일시']}")
 
 
+@data.operation("원장")
 def search_students(user):
     """6.6.1.3 학생 검색. 이름 또는 연락처로 찾는다."""
     while True:
@@ -317,6 +313,7 @@ def search_students(user):
         _print_student_rows(found)
 
 
+@data.operation("원장")
 def add_student(user):
     """6.6.1.4 등록. students.txt 와 users.txt 에 함께 추가한다."""
     try:
@@ -348,6 +345,7 @@ STUDENT_FIELD_SCREEN = """1. 이름
 0. 이전 메뉴"""
 
 
+@data.operation("원장")
 def update_student(user):
     """6.6.1.5 수정. 이름·연락처·학생 상태만 바꿀 수 있다."""
     students = data.read_students()
@@ -422,6 +420,7 @@ def _change_student_status(student, students):
               f"수강중 수강 등록 {len(targets)}건이 함께 취소되었습니다.")
 
 
+@data.operation("원장")
 def delete_student(user):
     """6.6.1.6 삭제. 수강 등록 이력(수강중·취소)이 하나라도 있으면 삭제하지 않는다."""
     students = data.read_students()
@@ -494,6 +493,7 @@ def _print_teacher_rows(teachers):
               f"{teacher['사용자ID']:<14}{teacher['강사상태']:<6}{count}")
 
 
+@data.operation("원장")
 def list_teachers(user):
     """6.6.2.1 목록 조회. 강사 ID 오름차순."""
     teachers = _sorted_by(data.read_teachers(), "강사ID")
@@ -504,6 +504,7 @@ def list_teachers(user):
     _print_teacher_rows(teachers)
 
 
+@data.operation("원장")
 def show_teacher(user):
     """6.6.2.2 상세 조회. 담당 반 목록까지 보여 준다."""
     teacher = _ask_id("강사 ID를 입력하세요", data.read_teachers(),
@@ -530,6 +531,7 @@ def show_teacher(user):
               f"{class_['요일목록']:<8}{_periods(class_):<10}{_class_status(class_)}")
 
 
+@data.operation("원장")
 def search_teachers(user):
     """6.6.2.3 강사 검색. 이름 또는 연락처로 찾는다."""
     while True:
@@ -559,6 +561,7 @@ def search_teachers(user):
         _print_teacher_rows(found)
 
 
+@data.operation("원장")
 def add_teacher(user):
     """6.6.2.4 등록. teachers.txt 와 users.txt 에 함께 추가한다."""
     try:
@@ -589,6 +592,7 @@ TEACHER_FIELD_SCREEN = """1. 이름
 0. 이전 메뉴"""
 
 
+@data.operation("원장")
 def update_teacher(user):
     """6.6.2.5 수정. 이름·연락처·강사 상태만 바꿀 수 있다."""
     teachers = data.read_teachers()
@@ -646,6 +650,7 @@ def _change_teacher_status(teacher):
     return True
 
 
+@data.operation("원장")
 def delete_teacher(user):
     """6.6.2.6 삭제. 그 강사를 참조하는 반이 하나라도 있으면 삭제하지 않는다."""
     teachers = data.read_teachers()
@@ -716,6 +721,7 @@ def _print_subject_rows(subjects):
         print(f" {subject['과목ID']:<9}{subject['과목명']:<22}{count}")
 
 
+@data.operation("원장")
 def list_subjects(user):
     """6.6.3.1 목록 조회. 과목 ID 오름차순."""
     subjects = _sorted_by(data.read_subjects(), "과목ID")
@@ -726,6 +732,7 @@ def list_subjects(user):
     _print_subject_rows(subjects)
 
 
+@data.operation("원장")
 def show_subject(user):
     """6.6.3.2 상세 조회. 그 과목으로 개설된 반 목록까지 보여 준다."""
     subject = _ask_id("과목 ID를 입력하세요", data.read_subjects(),
@@ -750,6 +757,7 @@ def show_subject(user):
               f"{teacher:<14}{class_['요일목록']:<8}{_periods(class_)}")
 
 
+@data.operation("원장")
 def search_subjects(user):
     """6.6.3.3 과목 검색. 과목명으로 찾는다. (4.2.2 검색 규칙)"""
     query = ui.ask_target("검색할 과목명을 입력하세요")
@@ -766,6 +774,7 @@ def search_subjects(user):
     _print_subject_rows(found)
 
 
+@data.operation("원장")
 def add_subject(user):
     """6.6.3.4 등록. 과목명 자체의 중복은 허용한다."""
     try:
@@ -783,6 +792,7 @@ def add_subject(user):
         print(f"[OK_SUBJECT_ADD] 과목 {subject_id}({name})이 등록되었습니다.")
 
 
+@data.operation("원장")
 def update_subject(user):
     """6.6.3.5 수정. 과목명만 바꿀 수 있다.
 
@@ -803,6 +813,7 @@ def update_subject(user):
         print(f"[OK_SUBJECT_UPDATE] 과목 {subject['과목ID']}의 이름이 수정되었습니다.")
 
 
+@data.operation("원장")
 def delete_subject(user):
     """6.6.3.6 삭제. 그 과목을 참조하는 반이 하나라도 있으면 삭제하지 않는다."""
     subjects = data.read_subjects()
@@ -851,6 +862,7 @@ def manage_classes(user):
     }, user)
 
 
+@data.operation("원장")
 def list_classes(user):
     """6.6.4.1 목록 조회. 반 ID 오름차순."""
     classes = _sorted_by(data.read_classes(), "반ID")
@@ -872,6 +884,7 @@ def list_classes(user):
               f"{_enrolled_text(class_['반ID'])}/{class_['정원']}")
 
 
+@data.operation("원장")
 def show_class(user):
     """6.6.4.2 상세 조회. 수강생 목록까지 보여 준다."""
     class_ = _ask_id("반 ID를 입력하세요", data.read_classes(),
@@ -971,6 +984,7 @@ def _ask_weekdays(label):
         _print_error(errors.E_FILE_FORMAT, "요일 목록 형식이 올바르지 않습니다. 예: 월 수")
 
 
+@data.operation("원장")
 def open_class(user):
     """6.6.4.3 개설. 입력 → 검사 → 요약·확인 → 저장."""
     subjects = data.read_subjects()
@@ -1096,6 +1110,7 @@ CLASS_FIELD_SCREEN = """1. 반 이름
 0. 이전 메뉴"""
 
 
+@data.operation("원장")
 def update_class(user):
     """6.6.4.4 수정. 반 이름·담당 강사·정원만 바꿀 수 있다.
 
@@ -1165,13 +1180,14 @@ def _change_class_capacity(class_):
     """6.6.4.4 정원. 1~99 이고, 현재 "수강중" 등록 수보다 작을 수 없다."""
     capacity = _ask_capacity("새 정원")
     enrolled = _enrolled(class_["반ID"])
-    if enrolled is not None and int(capacity) < enrolled:
+    if int(capacity) < enrolled:
         _print_error(errors.E_CAPACITY_UNDER)
         return False
     class_["정원"] = capacity
     return True
 
 
+@data.operation("원장")
 def close_class(user):
     """6.6.4.5 폐강. 그 반의 "수강중" 수강 등록을 모두 취소 처리한다."""
     classes = data.read_classes()
@@ -1206,3 +1222,134 @@ def close_class(user):
     if _save({data.CLASSES: classes, data.ENROLLMENTS: enrollments}):
         print(f"[OK_CLASS_CLOSE] 반 {class_['반ID']}이 폐강되었습니다. "
               f"수강중 수강 등록 {len(targets)}건이 함께 취소되었습니다.")
+
+
+# ---- 5번 통합 보완: 6.6.6 검사 화면 / 6.6.8 비밀번호 관리 ----
+# 기존 학생·강사·과목·반 함수는 변경하지 않는다.
+
+
+def run_integrity_check(user):
+    if user.get("사용자역할") != "원장":
+        _print_error(errors.E_NO_PERMISSION, "이 기능을 사용할 권한이 없습니다.")
+        return
+    problems = data.check_integrity()
+    names = ["파일 존재·읽기 가능 확인", "UTF-8 디코딩 확인", "행의 필드 수·문법 검사",
+             "필드별 형식·범위 검사", "파일 내 ID 중복 검사", "파일 간 참조 무결성 검사",
+             "수업 시간·정원·등록 관계 검사", "가상 시각 역행 검사"]
+    print("===== 무결성 검사 =====")
+    for stage, name in enumerate(names, 1):
+        matches = [e for e in problems if e.stage == stage]
+        excluded = sorted({f for e in problems for f in getattr(e, "excluded_files", ())})
+        note = f" (선행 검사 오류 파일 제외: {', '.join(excluded)})" if excluded and stage >= 4 else ""
+        print(f"[{stage}/8] {name}{note} ... {'FAIL' if matches else 'OK'}")
+        for problem in matches:
+            _print_error(problem.code, problem.message)
+    if problems:
+        print(f"오류 {len(problems)}건")
+        print("데이터 파일에 오류가 있어 프로그램을 종료합니다. 파일을 수정한 뒤 다시 실행하세요.")
+        raise SystemExit(1)
+    print("[OK_INTEGRITY] 무결성 검사 결과: 이상 없음.")
+
+
+def password_input(label):
+    import getpass
+    while True:
+        value = getpass.getpass(label + ": ")
+        if value == "/cancel":
+            raise ui.InputCancelled()
+        if not value:
+            _print_error(errors.E_INPUT_EMPTY)
+        elif not data.is_password(value):
+            _print_error(errors.E_FILE_FORMAT, "비밀번호 형식이 올바르지 않습니다.")
+        else:
+            return value
+
+
+def new_password():
+    while True:
+        first = password_input("새 비밀번호")
+        second = password_input("새 비밀번호 확인")
+        if first == second:
+            return first
+        _print_error(errors.E_FILE_FORMAT, "두 비밀번호가 일치하지 않습니다.")
+
+
+@data.operation("원장")
+def reset_password(user):
+    if not _password_access(user):
+        return
+    users = data.read_users()
+    while True:
+        target_id = ui.ask_target("초기화할 사용자 ID를 입력하세요")
+        if target_id is None:
+            return
+        target = next((u for u in users if u["사용자ID"] == target_id), None)
+        if target is None:
+            _print_error(errors.E_REF_MISSING, "존재하지 않는 사용자 ID입니다.")
+        elif target["사용자역할"] == "원장":
+            _print_error(errors.E_ROLE_INVALID)
+        else:
+            break
+    reader = data.read_students if target["사용자역할"] == "학생" else data.read_teachers
+    person = next(p for p in reader() if p["사용자ID"] == target_id)
+    print(f"대상: {target_id} / {target['사용자역할']} / {person['이름']}")
+    value = new_password()
+    if not ui.ask_yes_no("선택한 계정의 비밀번호를 초기화"):
+        return
+    target["비밀번호"] = value
+    if data.write_users(users):
+        print("비밀번호 초기화가 완료되었습니다.")
+    else:
+        _print_error(errors.E_SAVE)
+
+
+@data.operation("원장")
+def change_admin_password(user):
+    if not _password_access(user):
+        return
+    users = data.read_users()
+    target = next(u for u in users if u["사용자ID"] == user["사용자ID"])
+    if password_input("현재 비밀번호") != target["비밀번호"]:
+        _print_error(errors.E_AUTH_FAIL)
+        return
+    value = new_password()
+    if not ui.ask_yes_no("원장 비밀번호를 변경"):
+        return
+    target["비밀번호"] = value
+    if data.write_users(users):
+        print("원장 비밀번호가 변경되었습니다.")
+    else:
+        _print_error(errors.E_SAVE)
+
+
+def manage_passwords(user):
+    while True:
+        print("===== 원장 메뉴 > 계정 비밀번호 관리 =====\n1. 학생·강사 비밀번호 초기화\n2. 원장 비밀번호 변경\n0. 이전 메뉴")
+        choice = ui.ask_menu_choice([0, 1, 2])
+        if choice == 0:
+            return
+        if choice == 1:
+            try:
+                reset_password(user)
+            except ui.InputCancelled:
+                print("작업을 취소했습니다. 변경된 내용이 없습니다.")
+        elif choice == 2:
+            try:
+                change_admin_password(user)
+            except ui.InputCancelled:
+                print("작업을 취소했습니다. 변경된 내용이 없습니다.")
+
+
+def _password_access(user):
+    """역할 확인 후 손상된 계정 파일로 비밀번호를 바꾸지 않게 한다."""
+    if user.get("사용자역할") != "원장":
+        _print_error(errors.E_NO_PERMISSION, "이 기능을 사용할 권한이 없습니다.")
+        return False
+    problems = data.check_integrity()
+    if problems:
+        raise problems[0]
+    account = _find(data.read_users(), "사용자ID", user.get("사용자ID"))
+    if account is None or account["사용자역할"] != "원장":
+        _print_error(errors.E_NO_PERMISSION, "이 기능을 사용할 권한이 없습니다.")
+        return False
+    return True

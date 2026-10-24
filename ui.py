@@ -13,9 +13,11 @@
 """
 
 import errors
+import getpass
+import re
 
 
-class InputCancelled(Exception):
+class InputCancelled(errors.OperationCancelled):
     """여러 값을 입력받는 도중 /cancel 이 들어왔을 때 던진다. (6.1.5)
 
     받는 쪽은 입력한 값을 전부 버리고 파일을 바꾸지 않은 채
@@ -94,7 +96,8 @@ def ask_required(label, strip=True):
     순서가 따로 정해져 있고, 비밀번호는 getpass 로 받으며, /cancel 이 없다.
     """
     while True:
-        text = input(f"{label}: ")
+        text = (getpass.getpass(f"{label}: ") if not strip and "비밀번호" in label
+                else input(f"{label}: "))
         if strip:
             text = text.strip(" ")
         if text == "/cancel":
@@ -106,21 +109,28 @@ def ask_required(label, strip=True):
 
 
 def ask_target(label):
-    """상세 조회·수정·삭제할 대상의 ID 처럼, 작업 대상을 지정하는 값을 입력받는다. (6.1.5)
+    """빈 입력은 이전 메뉴. 내부 식별자는 ASCII 접두사+4자리로 검사한다."""
+    prefixes = {"반 ID": "C", "학생 ID": "S", "강사 ID": "T", "과목 ID": "P", "등록 ID": "E"}
+    prefix = next((value for key, value in prefixes.items() if key in label), None)
+    while True:
+        value = input(f"{label}: ").strip(" ")
+        if value == "":
+            return None
+        if value == "/cancel":
+            raise InputCancelled()
+        if value == "0" or prefix is None:
+            return value
+        if re.fullmatch(prefix + r"[0-9]{4}", value) and value[1:] != "0000":
+            return value
+        print(f"[{errors.E_FILE_FORMAT}] ID 형식이 올바르지 않습니다.")
 
-    label  프롬프트 문장. 예) "학생 ID를 입력하세요"  →  화면에는 "학생 ID를 입력하세요: "
 
-    6.1.5 표 — "상세 조회 등 대상을 지정하기 위한 ID 입력: 해당 작업을 취소하고 이전 메뉴로 돌아간다."
-    그래서 ask_required 와 달리 빈 입력이면 다시 묻지 않고 None 을 돌려준다.
-    받은 쪽은 None 이면 아무것도 바꾸지 않고 이전 메뉴로 돌아간다.
 
-        student_id = ui.ask_target("학생 ID를 입력하세요")
-        if student_id is None:
+
+
+def wait_for_back():
+    """조회 화면에서 유효한 0을 입력할 때까지 기다린다."""
+    while True:
+        print("0. 이전 메뉴")
+        if ask_menu_choice([0]) == 0:
             return
-
-    앞뒤 표준공백은 뗀다. (5.3) 형식 검사는 부르는 쪽이 data.is_* 로 한다.
-    """
-    text = input(f"{label}: ").strip(" ")
-    if text == "":
-        return None
-    return text
