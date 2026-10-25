@@ -205,12 +205,20 @@ def _write_text_unchecked(path, text):
     return True
 
 
-def _write_table_unchecked(path, records):
+def _table_text(path, records):
+    """저장할 표를 만들며 반의 요일 목록은 표준형으로 정렬한다."""
     header = HEADERS[path]
     lines = ["\t".join(header)]
     for rec in records:
-        lines.append("\t".join(rec[field] for field in header))
-    return _write_text(path, "\n".join(lines) + "\n")
+        lines.append("\t".join(
+            sort_weekday_list(rec[field])
+            if path == CLASSES and field == "요일목록" else rec[field]
+            for field in header))
+    return "\n".join(lines) + "\n"
+
+
+def _write_table_unchecked(path, records):
+    return _write_text(path, _table_text(path, records))
 
 
 def write_users(records):        return _write_table(USERS, records)
@@ -297,10 +305,7 @@ def _write_all_unchecked(changes):
     """여러 파일을 임시 저장한 뒤 교체하고, 처리 가능한 실패 시 원본을 복구한다."""
     contents = {}
     for path, records in changes.items():
-        header = HEADERS[path]
-        lines = ["\t".join(header)]
-        lines.extend("\t".join(rec[field] for field in header) for rec in records)
-        contents[path] = "\n".join(lines) + "\n"
+        contents[path] = _table_text(path, records)
     originals, temporary, replaced, backups = {}, [], [], []
     keep_backups = False
     try:

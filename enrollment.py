@@ -689,7 +689,7 @@ def show_teacher_schedule(user):
     print()
     print("===== 강사 메뉴 > 수업 일정 조회 =====")
     if not rows:
-        print("현재 진행 중인 수업이 없습니다.")
+        print("현재 진행 중인 담당 수업이 없습니다.")
     for weekday, period, class_id, class_ in sorted(rows, key=lambda row: row[:3]):
         print(f"{data.WEEKDAYS[weekday]} | {period}~{class_['종료교시']}교시 | "
               f"{class_id} | {class_['반이름']} | {subjects[class_['과목ID']]}")
