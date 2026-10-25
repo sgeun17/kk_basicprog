@@ -59,53 +59,65 @@ def show_my_info(user):
 
 # 6.4.2
 @data.operation("학생")
+
 def show_class_detail(user):
-    """선택한 반의 상세 정보를 조회한다."""
+    """기획서 6.4.3: 학생 반 상세 정보 조회"""
 
-    # 반 ID를 입력받는다.
-    class_id = ui.ask_target("상세 조회할 반 ID를 입력하세요")
+    students = data.read_students()
+    student = next(
+        (s for s in students if s["사용자ID"] == user["사용자ID"]),
+        None
+    )
+    student_name = student["이름"] if student else user.get("이름", "")
 
-    # 빈 입력이면 아무것도 하지 않고 돌아간다.
-    if class_id is None:
-        return
+    # 존재하지 않는 반 ID는 다시 입력받는다.
+    while True:
+        class_id = ui.ask_target("상세 조회할 반 ID를 입력하세요")
 
-    # 반 목록에서 입력한 ID와 일치하는 반을 찾는다.
-    classes = data.read_classes()
-    class_info = None
+        # 빈 입력 또는 0: 학생 메뉴로 복귀
+        if class_id is None or class_id == "0":
+            return
 
-    for c in classes:
-        if c["반ID"] == class_id:
-            class_info = c
-            break
-
-    # 존재하지 않는 반이면 오류를 출력한다.
-    if class_info is None:
-        print(
-            f"[{errors.E_REF_MISSING}] "
-            f"해당 반을 찾을 수 없습니다."
+        classes = data.read_classes()
+        class_info = next(
+            (c for c in classes if c["반ID"] == class_id),
+            None
         )
-        return
 
-    # 과목 정보와 강사 정보를 불러온다.
+        if class_info is None:
+            print(
+                f"[{errors.E_REF_MISSING}] "
+                "해당 반을 찾을 수 없습니다."
+            )
+            continue
+
+        # 정상적인 반 ID를 찾았으면 입력 반복 종료
+        break
+
     subjects = data.read_subjects()
     teachers = data.read_teachers()
 
-    subject_name = "정보 없음"
-    teacher_name = "정보 없음"
+    subject = next(
+        (s for s in subjects
+         if s["과목ID"] == class_info["과목ID"]),
+        None
+    )
+    teacher = next(
+        (t for t in teachers
+         if t["강사ID"] == class_info["강사ID"]),
+        None
+    )
 
-    for subject in subjects:
-        if subject["과목ID"] == class_info["과목ID"]:
-            subject_name = subject["과목명"]
-            break
+    subject_name = subject["과목명"] if subject else "정보 없음"
+    teacher_name = teacher["이름"] if teacher else "정보 없음"
 
-    for teacher in teachers:
-        if teacher["강사ID"] == class_info["강사ID"]:
-            teacher_name = teacher["이름"]
-            break
+    current_count = data.count_enrolled(class_id)
 
-    # 반 정보를 출력한다.
     print()
-    print("===== 학생 메뉴 > 반 상세 정보 조회 =====")
+    print(
+        f"===== 학생 메뉴 ({student_name}님) > "
+        "반 상세 정보 조회 ====="
+    )
     print(f"반 ID: {class_info['반ID']}")
     print(f"반 이름: {class_info['반이름']}")
     print(f"과목명: {subject_name}")
@@ -119,14 +131,18 @@ def show_class_detail(user):
         f"수업 기간: {class_info['시작날짜']}~"
         f"{class_info['종료날짜']}"
     )
-    current_count = data.count_enrolled(class_info["반ID"])
-    
-    if current_count is None:
-        print(f"현재 인원/정원: 미구현/{class_info['정원']}")
-    else:
-        print(f"현재 인원/정원: {current_count}/{class_info['정원']}")
-    print(f"반 상태: {class_info['반상태']}")
+    print(f"현재 수강 인원: {current_count}")
+    print(f"정원: {class_info['정원']}")
+    print(f"상태: {class_info['반상태']}")
+    print()
 
+    # 기획서에 명시된 이전 메뉴 선택
+    while True:
+        print("0. 이전 메뉴")
+        choice = ui.ask_menu_choice([0])
+
+        if choice == 0:
+            return
 
 
 @data.operation("학생")
@@ -416,7 +432,7 @@ def list_my_enrollments(user):
 
     my_enrollments = [
         e for e in enrollments
-        if (
+        if(
             e["학생ID"] == student["학생ID"]
             and e["등록상태"] == "수강중"
         )
@@ -427,6 +443,7 @@ def list_my_enrollments(user):
 
     if not my_enrollments:
         print("현재 수강 중인 반이 없습니다.")
+        ui.wait_for_back()
         return
 
     for e in my_enrollments:
